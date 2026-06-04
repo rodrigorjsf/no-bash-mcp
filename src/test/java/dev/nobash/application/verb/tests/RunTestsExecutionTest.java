@@ -380,6 +380,73 @@ class RunTestsExecutionTest {
         assertThat(capturedSpec.get().timeoutSeconds()).isEqualTo(TimeoutPolicy.DEFAULT_SECONDS + 1);
     }
 
+    // ---- issue #9 AC1 — targeted run (CLASS) returns the same three Envelope shapes ----
+
+    @Test
+    void targeted_class_run_returns_counts_only_ok_true_envelope(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(0, "", "fixtures/maven/surefire-all-passed.xml");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null, "CLASS", "FooTest");
+
+        assertThat(env.ok()).isTrue();
+        assertThat(env.summary().passed()).isGreaterThan(0);
+        assertThat(env.failures()).as("counts-only success").isNull();
+        assertThat(env.error()).isNull();
+    }
+
+    @Test
+    void targeted_method_run_returns_ok_false_test_failure_envelope(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(1, "", "fixtures/maven/surefire-normal-error-failure-skipped.xml");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null, "METHOD", "FooTest#testBar");
+
+        assertThat(env.ok()).isFalse();
+        assertThat(env.failures()).isNotEmpty();
+        assertThat(env.error()).isNull();
+    }
+
+    @Test
+    void targeted_run_with_compile_failure_returns_REPORT_NOT_PRODUCED(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubEmpty(1, "[ERROR] compile failed");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null, "CLASS", "FooTest");
+
+        assertThat(env.ok()).isFalse();
+        assertThat(env.error().code()).isEqualTo(ErrorCode.REPORT_NOT_PRODUCED);
+    }
+
+    @Test
+    void targeted_run_injects_exactly_one_dtest_token_and_an_agent_dtest_flag_is_dropped(
+            @TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(0, "", "fixtures/maven/surefire-all-passed.xml");
+
+        // The agent tries to inject its own -Dtest= as a free flag; the structured target is CLASS.
+        useCase.run(dir.toString(), List.of("-Dtest=AgentControlled"), null, "CLASS", "MpcControlled");
+
+        ExecSpec spec = capturedSpec.get();
+        List<String> testTokens = spec.argv().stream()
+                .filter(a -> a.startsWith("-Dtest=")).toList();
+
+        // Exactly ONE -Dtest= token — the MCP-controlled value. The agent's flag was dropped.
+        assertThat(testTokens).hasSize(1);
+        assertThat(testTokens.get(0)).isEqualTo("-Dtest=MpcControlled");
+    }
+
+    @Test
+    void a_full_suite_run_has_no_dtest_token_in_the_argv(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(0, "", "fixtures/maven/surefire-all-passed.xml");
+
+        useCase.run(dir.toString(), List.of(), null, null, null);
+
+        ExecSpec spec = capturedSpec.get();
+        assertThat(spec.argv()).noneMatch(a -> a.startsWith("-Dtest="));
+    }
+
     private static byte[] readBytes(String resource) {
         try (var in = RunTestsExecutionTest.class.getClassLoader().getResourceAsStream(resource)) {
             if (in == null) {

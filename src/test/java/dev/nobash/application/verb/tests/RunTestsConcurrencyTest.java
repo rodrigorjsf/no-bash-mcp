@@ -185,6 +185,48 @@ class RunTestsConcurrencyTest {
     }
 
     @Nested
+    class same_module_different_targets_still_collide_issue_9_AC3 {
+
+        @Test
+        void two_runs_on_the_same_module_with_different_targets_still_collide_RESOURCE_BUSY(
+                @TempDir Path dir) throws Exception {
+            // The RESOURCE_BUSY key is realpath(moduleDir), independent of the target selector.
+            // Run #1 targets CLASS=FooTest; Run #2 targets METHOD=BarTest#testX — different targets,
+            // same module → must still collide on the lock (D22, issue #9 AC3).
+            mavenProject(dir);
+            ModuleLock lock = new ModuleLock();
+            CountDownLatch entered = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            RunTestsUseCase useCase = useCaseWith(new BarrierExecutor(entered, release), lock);
+
+            ExecutorService pool = Executors.newSingleThreadExecutor();
+            try {
+                // Run #1 with CLASS target holds the lock inside execute() at the barrier.
+                Future<Envelope> first = pool.submit(
+                        () -> useCase.run(dir.toString(), List.of(), null, "CLASS", "FooTest"));
+                assertThat(entered.await(BARRIER_TIMEOUT_SECONDS, TimeUnit.SECONDS))
+                        .as("the first run must reach execute() and hold the lock").isTrue();
+
+                // Run #2 with a different METHOD target on the SAME module: must RESOURCE_BUSY.
+                Envelope second = useCase.run(dir.toString(), List.of(), null, "METHOD", "BarTest#testX");
+
+                assertThat(second.ok()).isFalse();
+                assertThat(second.error()).isNotNull();
+                assertThat(second.error().code())
+                        .as("different targets on the same module still collide on the realpath key")
+                        .isEqualTo(ErrorCode.RESOURCE_BUSY);
+
+                release.countDown();
+                Envelope firstResult = first.get(BARRIER_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                assertThat(firstResult.ok()).as("the first run completes once released").isTrue();
+            } finally {
+                release.countDown();
+                pool.shutdownNow();
+            }
+        }
+    }
+
+    @Nested
     class different_modules_proceed_concurrently_AC2 {
 
         @Test

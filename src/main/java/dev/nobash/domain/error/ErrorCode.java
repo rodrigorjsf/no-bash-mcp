@@ -49,5 +49,13 @@ public enum ErrorCode {
      * so the error surfaces the duplicate instead of silently serializing it. The {@code hint}
      * says the agent may retry once the first run frees the module.
      */
-    RESOURCE_BUSY
+    RESOURCE_BUSY,
+
+    /**
+     * The structured target selector ({@code targetKind}/{@code target}) is malformed: the kind
+     * is unknown, the value is blank, or the kind-specific format is violated (e.g. a METHOD
+     * target missing the required {@code ClassName#methodName} separator). Type validation is a
+     * pre-exec guard — NO process is launched for an invalid target (issue #9, AC4).
+     */
+    INVALID_TARGET
 }

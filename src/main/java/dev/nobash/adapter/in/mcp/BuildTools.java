@@ -30,17 +30,29 @@ public class BuildTools {
      * system {@code mvn} into a fresh per-run reports directory, normalize the Surefire report,
      * and return the result envelope with the positive-evidence failure floor.
      *
-     * @param path    the project directory; absent/blank fails closed to {@code INVALID_PATH}
-     * @param flags   agent-supplied flags, vetted against the per-operation allowlist
-     * @param timeout accepted but not enforced in this slice (enforcement is issue #6)
+     * <p>The optional structured target selector ({@code targetKind} + {@code target}) narrows the
+     * run to a specific class or method. The MCP translates the validated pair into a controlled
+     * {@code -Dtest=<value>} — never passed as an agent free-flag (the allowlist drops any
+     * {@code -Dtest=} in {@code flags}). An invalid selector returns {@code INVALID_TARGET} before
+     * any process is launched. Absent/null → full-suite run (no selector).</p>
+     *
+     * @param path        the project directory; absent/blank fails closed to {@code INVALID_PATH}
+     * @param flags       agent-supplied flags, vetted against the per-operation allowlist
+     * @param timeout     optional timeout in seconds; clamped to the policy cap
+     * @param targetKind  optional target kind: {@code CLASS} or {@code METHOD}; absent → full suite
+     * @param target      the test identity value matching the kind ({@code FooTest} / {@code FooTest#bar});
+     *                    absent → full suite
      * @return the result envelope (success, test-failure, or operational-error)
      */
     @Tool(name = "run_tests", description = "Run a project's tests via the detected manager and "
-            + "return a structured result envelope.")
+            + "return a structured result envelope. Optionally narrow to a class or method via "
+            + "targetKind + target.")
     public Envelope run_tests(
             @ToolArg(name = "path", description = "Path to the project directory") @Nullable String path,
             @ToolArg(name = "flags", description = "Optional manager flags (allowlisted)") @Nullable List<String> flags,
-            @ToolArg(name = "timeout", description = "Optional timeout in seconds") @Nullable Integer timeout) {
-        return runTests.run(path, flags == null ? List.of() : flags, timeout);
+            @ToolArg(name = "timeout", description = "Optional timeout in seconds") @Nullable Integer timeout,
+            @ToolArg(name = "targetKind", description = "Optional target kind: CLASS or METHOD") @Nullable String targetKind,
+            @ToolArg(name = "target", description = "Optional test identity: ClassName or ClassName#methodName") @Nullable String target) {
+        return runTests.run(path, flags == null ? List.of() : flags, timeout, targetKind, target);
     }
 }
