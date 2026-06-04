@@ -2,7 +2,10 @@ package dev.nobash.domain.envelope;
 
 import dev.nobash.domain.error.ErrorCode;
 import dev.nobash.domain.error.OperationalError;
+import dev.nobash.domain.result.ContainerFinding;
 import dev.nobash.domain.result.Finding;
+import dev.nobash.domain.result.SourceRef;
+import dev.nobash.domain.result.TestFinding;
 import dev.nobash.domain.result.Summary;
 import io.micronaut.core.annotation.Introspected;
 import io.micronaut.core.annotation.Nullable;
@@ -30,6 +33,14 @@ import java.util.List;
  * without runtime reflection (DESIGN.md §7). Optional wire fields are reference types so they
  * emit {@code null} rather than a misleading default.</p>
  *
+ * <p><b>P9 prompt-injection defense (issue #7).</b> The test-failure shape is the one that
+ * carries <em>repo-derived</em> content (test names, assertion messages, source paths, stack
+ * traces). Those strings pass through {@link OutboundNeutralizer} when the envelope is built:
+ * control/ANSI/zero-width sequences are stripped, per-field caps are applied, and the envelope
+ * is marked {@link #untrusted} so consumers know the failures list carries untrusted data.
+ * The success and operational-error shapes carry only server-authored content; they are not
+ * neutralized and are marked {@code untrusted=false}.</p>
+ *
  * @param ok       whether the operation itself succeeded (the application-layer failure floor)
  * @param verb     the logical operation invoked (e.g. {@code run_tests})
  * @param manager  the detected manager for ecosystem verbs ({@code mvn}); null when none
@@ -37,6 +48,8 @@ import java.util.List;
  * @param failures the normalized findings (test- and container-level); present only on test-failure
  * @param error    the operational error when this is the op-error shape; null otherwise
  * @param handle   a token to retrieve stashed raw output later; null when nothing was stashed
+ * @param untrusted {@code true} when this envelope carries repo-derived content in
+ *                  {@code failures[]} that has been neutralized but is still untrusted data
  */
 @Serdeable
 @Introspected
@@ -47,28 +60,41 @@ public record Envelope(boolean ok,
                        @Nullable Summary summary,
                        @Nullable List<Finding> failures,
                        @Nullable OperationalError error,
-                       @Nullable Handle handle) {
+                       @Nullable Handle handle,
+                       boolean untrusted) {
 
     /**
      * Build a counts-only success envelope ({@code ok=true}). Surfaces NO report — a green run
      * gives the agent the counts and nothing to triage (token efficiency, CONTEXT.md "Noise").
+     * Server-authored content only; marked {@code untrusted=false}.
      */
     public static Envelope success(String verb, String manager, Summary summary, @Nullable Handle handle) {
-        return new Envelope(true, verb, manager, summary, null, null, handle);
+        return new Envelope(true, verb, manager, summary, null, null, handle, false);
     }
 
     /**
      * Build a test-failure envelope ({@code ok=false}) carrying the normalized {@code failures[]}.
-     * The failure floor adds only the boolean — it NEVER injects a synthetic finding, so each
-     * finding appears exactly once and {@code summary} counts are unchanged (D28/D30).
+     *
+     * <p><b>P9 neutralization:</b> every repo-derived string in each {@link Finding} is passed
+     * through {@link OutboundNeutralizer} before being stored in the envelope. Control chars,
+     * ANSI escape sequences, and zero-width/bidi code points are stripped; per-field caps are
+     * applied. The envelope is marked {@code untrusted=true} to signal that {@code failures[]}
+     * carries untrusted data.</p>
+     *
+     * <p>The failure floor adds only the boolean — it NEVER injects a synthetic finding, so each
+     * finding appears exactly once and {@code summary} counts are unchanged (D28/D30).</p>
      */
     public static Envelope testFailure(String verb, String manager, Summary summary,
                                        List<Finding> failures, @Nullable Handle handle) {
-        return new Envelope(false, verb, manager, summary, List.copyOf(failures), null, handle);
+        List<Finding> neutralized = failures.stream()
+                .map(Envelope::neutralizeFinding)
+                .toList();
+        return new Envelope(false, verb, manager, summary, List.copyOf(neutralized), null, handle, true);
     }
 
     /**
      * Build an operational-error envelope ({@code ok=false}) for a verb, with no stashed output.
+     * Server-authored content only; marked {@code untrusted=false}.
      */
     public static Envelope operationalError(String verb, ErrorCode code, String message, String hint) {
         return operationalError(verb, code, message, hint, null);
@@ -77,9 +103,50 @@ public record Envelope(boolean ok,
     /**
      * Build an operational-error envelope ({@code ok=false}) carrying a {@link Handle} to the
      * stashed raw output (e.g. the compiler diagnostics behind {@code REPORT_NOT_PRODUCED}).
+     * Server-authored content only; marked {@code untrusted=false}.
      */
     public static Envelope operationalError(String verb, ErrorCode code, String message, String hint,
                                             @Nullable Handle handle) {
-        return new Envelope(false, verb, null, null, null, new OperationalError(code, message, hint), handle);
+        return new Envelope(false, verb, null, null, null, new OperationalError(code, message, hint), handle, false);
+    }
+
+    // ---- P9 neutralization helpers ----
+
+    /**
+     * Apply {@link OutboundNeutralizer} to all repo-derived string fields of a {@link Finding}.
+     * Returns the same finding object if no field is changed (null-safe, no allocation).
+     */
+    private static Finding neutralizeFinding(Finding finding) {
+        return switch (finding) {
+            case TestFinding tf -> neutralizeTestFinding(tf);
+            case ContainerFinding cf -> neutralizeContainerFinding(cf);
+        };
+    }
+
+    private static TestFinding neutralizeTestFinding(TestFinding tf) {
+        String suite   = OutboundNeutralizer.neutralize(tf.suite(),   OutboundNeutralizer.SUITE_CAP);
+        String name    = OutboundNeutralizer.neutralize(tf.name(),    OutboundNeutralizer.TEST_NAME_CAP);
+        String message = OutboundNeutralizer.neutralize(tf.message(), OutboundNeutralizer.MESSAGE_CAP);
+        String detail  = OutboundNeutralizer.neutralize(tf.detail(),  OutboundNeutralizer.DETAIL_CAP);
+        SourceRef src  = neutralizeSourceRef(tf.source());
+        // path[] contains fully qualified class/method names — same cap as name.
+        List<String> path = tf.path().stream()
+                .map(p -> OutboundNeutralizer.neutralize(p, OutboundNeutralizer.TEST_NAME_CAP))
+                .toList();
+        return new TestFinding(suite, name, path, tf.outcome(), tf.rawStatus(), message, src, detail);
+    }
+
+    private static ContainerFinding neutralizeContainerFinding(ContainerFinding cf) {
+        String container = OutboundNeutralizer.neutralize(cf.container(), OutboundNeutralizer.CONTAINER_CAP);
+        String message   = OutboundNeutralizer.neutralize(cf.message(),   OutboundNeutralizer.MESSAGE_CAP);
+        String detail    = OutboundNeutralizer.neutralize(cf.detail(),    OutboundNeutralizer.DETAIL_CAP);
+        SourceRef src    = neutralizeSourceRef(cf.source());
+        return new ContainerFinding(cf.scope(), container, cf.outcome(), cf.rawStatus(), message, src, detail);
+    }
+
+    private static @Nullable SourceRef neutralizeSourceRef(@Nullable SourceRef src) {
+        if (src == null) return null;
+        String file = OutboundNeutralizer.neutralize(src.file(), OutboundNeutralizer.SOURCE_FILE_CAP);
+        return new SourceRef(file, src.line());
     }
 }
