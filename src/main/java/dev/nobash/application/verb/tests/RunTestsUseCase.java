@@ -2,6 +2,7 @@ package dev.nobash.application.verb.tests;
 
 import dev.nobash.application.policy.TestsFlagPolicy;
 import dev.nobash.application.runcache.RawOutputStash;
+import dev.nobash.application.runcache.RunRecord;
 import dev.nobash.domain.envelope.Envelope;
 import dev.nobash.domain.envelope.Handle;
 import dev.nobash.domain.error.ErrorCode;
@@ -151,10 +152,14 @@ public class RunTestsUseCase {
         // The application-layer failure floor (D28/D29). The frozen NormalizedRun.ok() stays
         // findings-only; exit/timedOut/executedTests are folded in ONLY here.
         boolean ok = run.ok() && result.exitCode() == 0 && !result.timedOut() && executedTests > 0;
+        // Stash the full run record (raw output + findings) so get_log can drill in without re-run.
+        String rawOutput = (result.stdout() == null ? "" : result.stdout())
+                + (result.stderr() == null ? "" : result.stderr());
+        Handle handle = stash.put(new RunRecord(rawOutput, run.findings()));
         if (ok) {
-            return Envelope.success(VERB, MANAGER, run.summary(), null);
+            return Envelope.success(VERB, MANAGER, run.summary(), handle);
         }
-        return Envelope.testFailure(VERB, MANAGER, run.summary(), run.findings(), null);
+        return Envelope.testFailure(VERB, MANAGER, run.summary(), run.findings(), handle);
     }
 
     private static Path allocateFreshReportsDir() {
