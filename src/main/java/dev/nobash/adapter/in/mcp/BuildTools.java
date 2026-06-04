@@ -13,8 +13,8 @@ import java.util.List;
  * The inbound MCP adapter for build/test verbs (DESIGN.md §4). The {@code @Tool} bean IS the
  * adapter — there is no inbound port interface; transport (STDIO) is configuration. Discovery
  * is via compile-time DI. This slice exposes a single verb, {@code run_tests}, which delegates
- * to {@link RunTestsUseCase} and returns the operational-error {@link Envelope} as structured
- * content over the JSON-RPC/STDIO channel.
+ * to {@link RunTestsUseCase} and returns the result {@link Envelope} (success, test-failure, or
+ * operational-error) as structured content over the JSON-RPC/STDIO channel.
  */
 @Singleton
 public class BuildTools {
@@ -26,13 +26,14 @@ public class BuildTools {
     }
 
     /**
-     * Run a project's tests via the detected manager. In this slice the verb stops at the
-     * operational-error gate (input validation + security guards) and never launches a process.
+     * Run a project's tests via the detected manager: validate + guards, then launch the trusted
+     * system {@code mvn} into a fresh per-run reports directory, normalize the Surefire report,
+     * and return the result envelope with the positive-evidence failure floor.
      *
      * @param path    the project directory; absent/blank fails closed to {@code INVALID_PATH}
      * @param flags   agent-supplied flags, vetted against the per-operation allowlist
-     * @param timeout accepted but not enforced in this slice
-     * @return the result envelope (operational-error shape in this slice)
+     * @param timeout accepted but not enforced in this slice (enforcement is issue #6)
+     * @return the result envelope (success, test-failure, or operational-error)
      */
     @Tool(name = "run_tests", description = "Run a project's tests via the detected manager and "
             + "return a structured result envelope.")

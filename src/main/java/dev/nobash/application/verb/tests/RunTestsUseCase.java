@@ -1,34 +1,55 @@
 package dev.nobash.application.verb.tests;
 
 import dev.nobash.application.policy.TestsFlagPolicy;
+import dev.nobash.application.runcache.RawOutputStash;
 import dev.nobash.domain.envelope.Envelope;
+import dev.nobash.domain.envelope.Handle;
 import dev.nobash.domain.error.ErrorCode;
 import dev.nobash.domain.port.out.CommandExecutorPort;
+import dev.nobash.domain.port.out.ExecResult;
+import dev.nobash.domain.port.out.ExecSpec;
+import dev.nobash.domain.result.NormalizedRun;
+import dev.nobash.domain.result.SurefireNormalizer;
 import jakarta.inject.Singleton;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 /**
- * The {@code run_tests} use-case (verb slice). It validates the request and runs the
- * programmatic security guards <strong>before any process is launched</strong>
- * (DESIGN.md §9, security-tests-first). Guard order is fixed and fail-closed:
+ * The {@code run_tests} use-case (verb slice). It validates the request, runs the programmatic
+ * security guards <strong>before any process is launched</strong> (DESIGN.md §9), then
+ * orchestrates the full execution tracer: resolve the module, allocate a fresh per-run reports
+ * directory, inject it into the {@link ExecSpec} (report freshness by construction, D27), launch
+ * the trusted system {@code mvn} via the {@link CommandExecutorPort} seam, read that fresh dir,
+ * normalize the Surefire reports, and assemble the result {@link Envelope} with the
+ * positive-evidence failure floor (D28/D29).
  *
+ * <p>Guard order is fixed and fail-closed: {@code INVALID_PATH} → {@code NO_MANAGER_DETECTED} →
+ * {@code TOOL_NOT_INSTALLED}. The executor seam is consulted ONLY once those guards pass.</p>
+ *
+ * <p>After exec, the outcome is decided in this fixed precedence (the order is load-bearing — see
+ * the container-only case below):</p>
  * <ol>
- *   <li>{@code INVALID_PATH} — path is null, missing, or not a directory. Makes NO
- *       workspace-confinement claim (path existence / directory-ness only).</li>
- *   <li>{@code NO_MANAGER_DETECTED} — the directory has no {@code pom.xml} marker; the
- *       message lists what was looked for.</li>
- *   <li>{@code TOOL_NOT_INSTALLED} — the trusted system {@code mvn} is absent from
- *       {@code PATH} (resolved via the port; never a repo wrapper, ADR-0008).</li>
+ *   <li><b>empty fresh dir</b> ⇒ compile failure (no report produced): stash the compiler stderr
+ *       behind a {@link Handle} and return {@code REPORT_NOT_PRODUCED} (D25/D27).</li>
+ *   <li>else normalize every {@code *.xml}; {@code executedTests = passed + failed + errored}
+ *       (excludes {@code SKIPPED}, D29). If {@code executedTests == 0} <em>and the run is otherwise
+ *       green</em> ({@code run.ok()}) ⇒ {@code NO_TESTS_RUN} (D29). The {@code run.ok()} guard is
+ *       essential: a container-only run (a {@code @BeforeAll} throw) also has
+ *       {@code executedTests == 0} but is NOT ok, so it must fall through to a test-failure
+ *       envelope carrying the container finding (AC8 / the G5 keystone), never {@code NO_TESTS_RUN}.</li>
+ *   <li>else {@code ok = run.ok() && exitCode == 0 && !timedOut && executedTests > 0} (the
+ *       application-layer floor; the frozen domain {@link NormalizedRun#ok()} stays findings-only).
+ *       {@code ok} ⇒ counts-only success; otherwise a test-failure envelope carrying
+ *       {@code run.findings()} as {@code failures[]}.</li>
  * </ol>
- *
- * <p>The executor port is consulted ONLY once the path and manager-marker guards pass — so
- * the early guards return without any outbound call, and this slice never launches
- * {@code mvn}. Argv construction (always an array) and flag vetting (the allowlist) are wired
- * but execution itself is a later slice; the flow stops at the operational-error gate.</p>
  */
 @Singleton
 public class RunTestsUseCase {
@@ -36,22 +57,27 @@ public class RunTestsUseCase {
     private static final String VERB = "run_tests";
     private static final String MANAGER = "mvn";
     private static final String MANAGER_MARKER = "pom.xml";
+    private static final String REPORTS_DIR_PREFIX = "no-bash-mcp-surefire-";
 
     private final CommandExecutorPort executor;
     private final ArgvBuilder argvBuilder;
     private final TestsFlagPolicy flagPolicy;
+    private final RawOutputStash stash;
+    private final SurefireNormalizer normalizer = new SurefireNormalizer();
 
-    public RunTestsUseCase(CommandExecutorPort executor, ArgvBuilder argvBuilder, TestsFlagPolicy flagPolicy) {
+    public RunTestsUseCase(CommandExecutorPort executor, ArgvBuilder argvBuilder,
+                           TestsFlagPolicy flagPolicy, RawOutputStash stash) {
         this.executor = executor;
         this.argvBuilder = argvBuilder;
         this.flagPolicy = flagPolicy;
+        this.stash = stash;
     }
 
     /**
      * @param path    the project directory (optional at the wire; null fails closed)
      * @param flags   agent-supplied flags (untrusted; vetted by the allowlist)
-     * @param timeout accepted but NOT enforced in this slice (enforcement is a later slice)
-     * @return an operational-error envelope; this slice never returns a success envelope
+     * @param timeout accepted but NOT enforced in this slice (enforcement is issue #6)
+     * @return the result envelope (success, test-failure, or operational-error)
      */
     public Envelope run(String path, List<String> flags, Integer timeout) {
         // Guard 1 — INVALID_PATH (null / missing / not-a-directory). No confinement claim.
@@ -88,11 +114,74 @@ public class RunTestsUseCase {
                     "Install " + MANAGER + " and ensure it is on the system PATH.");
         }
 
-        // Past the operational-error gate: argv is always an array and flags are vetted.
-        // Real execution is a later slice (this slice stops here).
+        // Preflight (DEPS_NOT_INSTALLED) is a Maven no-op (D21): deps resolve on demand from
+        // ~/.m2 during the build, so there is nothing to check before exec. Pass through.
+
+        // Allocate a unique, empty-before-exec reports directory so any XML in it is necessarily
+        // from THIS run (report freshness by construction, D27). Argv vetting drops every agent
+        // flag outside the allowlist; the reportsDirectory flag is then injected by the MCP.
+        Path freshReportsDir = allocateFreshReportsDir();
         List<String> vetted = flagPolicy.filter(flags == null ? List.of() : flags);
-        argvBuilder.buildTestArgv(vetted);
-        throw new UnsupportedOperationException(
-                "run_tests execution is not implemented in this slice (operational-error gate only)");
+        ExecSpec spec = argvBuilder.buildTestArgv(vetted, freshReportsDir.toString(), dir.toString());
+
+        ExecResult result = executor.execute(spec);
+
+        // Empty fresh dir after exec ⇒ no Surefire report ⇒ compile failure (D25/D27).
+        List<String> reportXmls = readReportXmls(freshReportsDir);
+        if (reportXmls.isEmpty()) {
+            Handle handle = stash.stash(result.stderr());
+            return Envelope.operationalError(VERB, ErrorCode.REPORT_NOT_PRODUCED,
+                    "The build produced no test report (a compile failure is the usual cause).",
+                    "Run `build` to see the compiler errors (retained behind the handle).",
+                    handle);
+        }
+
+        NormalizedRun run = normalizer.normalizeAll(reportXmls);
+        int executedTests = run.summary().passed() + run.summary().failed() + run.summary().errored();
+
+        // Positive-evidence floor (D29): a fresh-but-empty run greens vacuously. Only when the run
+        // is OTHERWISE green (run.ok()) is a zero-executed run NO_TESTS_RUN — a container-only run
+        // is executedTests==0 yet NOT ok, so it falls through to a test-failure envelope (AC8).
+        if (executedTests == 0 && run.ok()) {
+            return Envelope.operationalError(VERB, ErrorCode.NO_TESTS_RUN,
+                    "A test report was produced but no test executed (0 tests ran).",
+                    "Check the test selection, an all-@Disabled suite, or an empty module.");
+        }
+
+        // The application-layer failure floor (D28/D29). The frozen NormalizedRun.ok() stays
+        // findings-only; exit/timedOut/executedTests are folded in ONLY here.
+        boolean ok = run.ok() && result.exitCode() == 0 && !result.timedOut() && executedTests > 0;
+        if (ok) {
+            return Envelope.success(VERB, MANAGER, run.summary(), null);
+        }
+        return Envelope.testFailure(VERB, MANAGER, run.summary(), run.findings(), null);
+    }
+
+    private static Path allocateFreshReportsDir() {
+        try {
+            return Files.createTempDirectory(REPORTS_DIR_PREFIX);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to allocate a fresh reports directory", e);
+        }
+    }
+
+    /** Read every {@code *.xml} in the fresh reports dir as in-memory content for the normalizer. */
+    private static List<String> readReportXmls(Path reportsDir) {
+        if (!Files.isDirectory(reportsDir)) {
+            return List.of();
+        }
+        try (Stream<Path> entries = Files.list(reportsDir)) {
+            List<String> xmls = new ArrayList<>();
+            for (Path p : entries.filter(RunTestsUseCase::isXml).sorted().toList()) {
+                xmls.add(Files.readString(p, StandardCharsets.UTF_8));
+            }
+            return xmls;
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to read the reports directory", e);
+        }
+    }
+
+    private static boolean isXml(Path p) {
+        return Files.isRegularFile(p) && p.getFileName().toString().toLowerCase().endsWith(".xml");
     }
 }
