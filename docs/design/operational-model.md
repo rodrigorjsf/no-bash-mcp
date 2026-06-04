@@ -54,3 +54,34 @@ Verb calls may run **in parallel** (e.g. `run_tests(path="backend")` and
 `run_tests(path="frontend")` at once). Each call spawns its own process and gets its own `handle`;
 calls are independent. The MCP applies a **bounded concurrency cap** to avoid resource exhaustion
 from many heavy builds at once.
+
+**Same-resource collisions.** Cross-target concurrency is fine; **same-resource mutation** is not.
+By verb class:
+
+- **Read verbs** (`git_*`, `pr_*`, `dependencies`, `describe_project`, `get_log`) — unrestricted
+  concurrency; they mutate nothing.
+- **Mutating verbs** (`build`, `run_tests`, `install`) — **mutual exclusion at the granularity of the
+  resource they mutate**, enforced **fail-fast** with the operational error `RESOURCE_BUSY` (+ `hint`),
+  **never** by hidden blocking (blocking interacts badly with the caller's `timeout` and hides
+  duplicate work):
+  - `build` / `run_tests` → per **resolved target** (the module owning the output dir).
+  - `install` → per **manager** (lockfile and the shared local repo/cache — Maven `~/.m2`, npm cache —
+    are global beyond a single `path`).
+- **Run cache** — byte-cap eviction **never touches an in-flight or actively-read handle**; it evicts
+  only completed, idle entries, oldest-first within the cap.
+
+Fail-fast over queue/block keeps the operational-error model (P4) consistent and `timeout` clean —
+see ADR-0005.
+
+## Observability / logging
+
+STDIO uses **stdout for the JSON-RPC channel**, so **no log may ever be written to stdout** — doing
+so corrupts the protocol. Therefore:
+
+- **All logs go to stderr**, with an **optional log file** (path via a non-sensitive config knob) for
+  post-hoc debugging when the harness does not capture stderr.
+- **Verbosity** is a non-sensitive, agent-tunable config knob.
+- **Never log secrets or raw untrusted content** — forge tokens (see `forge-security-model.md`) and
+  repo-derived content (P9) are excluded; the neutralize-and-cap discipline applies to logs too.
+- **Spike-gated, not assumed:** confirm Micronaut MCP's default logger routes **off stdout** in the
+  STDIO spike — an empirical check (gotcha **G15**), never reasoned to a conclusion.

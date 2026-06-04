@@ -51,7 +51,9 @@ responsibility. Its job: provide efficiency and a security guardrail for the wel
 | Doc | Context |
 |---|---|
 | [`security-model.md`](./security-model.md) | Guarantee, execution mechanism, flag policy, policy governance, input validation, prompt-injection defense. |
+| [`forge-security-model.md`](./forge-security-model.md) | The **second** threat model: forge inspection over HTTP — forge guarantee, secret management, SSRF/base-URL allowlisting, tier gating, expanded untrusted-content. |
 | [`tool-catalog.md`](./tool-catalog.md) | v1 tools, output contract, result source. |
+| [`schema-divergence-map.md`](./schema-divergence-map.md) | Where JUnit XML / `jest --json` / `go test -json` refuse to share a shape — the input to the universal-schema spike (no field-freeze on paper). |
 | [`operational-model.md`](./operational-model.md) | Install model, scoping, timeout, run cache. |
 | [`build-and-distribution.md`](./build-and-distribution.md) | JVM dev vs GraalVM native at release, packaging. |
 | [`bootstrap-and-deployment.md`](./bootstrap-and-deployment.md) | Bootstrap skill, transitional git guardrail, harness-agnostic deployment. |

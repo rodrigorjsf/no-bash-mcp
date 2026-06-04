@@ -19,7 +19,27 @@ evidence. See gotcha **G11**.
 | `run_task(name, path?)` | Run a **project-defined** task the user has **opted in**. | **Opt-in allowlist, fail-closed**: by default *no* custom task is runnable; the human allow-lists tasks in the non-agent-mutable project config. "Project-defined ≠ safe to auto-run" — real repos hold `deploy:prod`, `db:migrate:prod`, `release` (gotcha **G14**). The 4 core verbs stay always-available. **No** arbitrary extra args (gotcha **G10**). |
 | `dependencies(path?, mode)` | Query-oriented dependency info. | Modes: `direct`, `why <pkg>`, `resolve <pkg>`. Normalized single schema. **Never** dumps the full transitive tree. |
 | `get_log(handle, filter?)` | Drill-down into a retained run result. | Expands exactly the requested slice (one failure, a test's system-out, full stderr) **without re-running**. The anti-RTK keystone (gotcha **G5**). |
-| `git_status` / `git_diff` / `git_log` / `git_show` / `git_branch` (read-only) | Structured git inspection. | **Read-only only.** Ecosystem-agnostic (one cheap adapter). Highest-volume evidence category (773 calls). `git_diff` reuses `handle` + `get_log` for verbose output. Mutating git is post-v1. May be exposed as a **single `git(mode, …)` tool** to keep the surface small. |
+| `git_status` / `git_diff` / `git_log` / `git_show` / `git_branch` (read-only) | Structured git inspection. | **Read-only only.** Ecosystem-agnostic (one cheap adapter). Highest-volume evidence category (773 calls). `git_diff` reuses `handle` + `get_log` for verbose output. Mutating git is post-v1. **Five discrete verbs, not a `git(mode)` tool** — see ADR-0001 (the convergence rule: git's modes diverge in both args and output). |
+
+## Forge inspection (v1: GitHub read-only)
+
+Remote, read-only inspection of a code-hosting forge over **HTTP** (ADR-0002, ADR-0003). v1
+implements **GitHub** (`github.com` + GitHub Enterprise Server); GitLab (SaaS + self-hosted) is next.
+Native REST/GraphQL, normalized into the same envelope. **No** generic `api` passthrough. Governed
+by a separate security domain — see [`forge-security-model.md`](./forge-security-model.md).
+
+| Tool | Purpose | Notes |
+|---|---|---|
+| `pr_checks(path?, ref?)` | CI check status for a PR / branch / commit. | Per-check `name` + `conclusion` (pass/fail/pending) + a `handle`. The failing check's log is drilled into via `get_log(handle)` — the `gh run view --log-failed` pattern, **non-lossy, no separate log verb**. The entry point of the CI-gated loop. |
+| `pr_view(path?, pr?)` | PR metadata in one call. | State, mergeable, review status, head/base, checks summary. |
+| `pr_diff(path?, pr?)` | The PR's diff. | Reuses `handle` + `get_log` for large diffs (same as `git_diff`). |
+
+- **Canonical verb prefix `pr_`** — "pull request (GitHub) / merge request (GitLab)". Forge-neutral
+  logical verbs (P5); each tool's description disambiguates per forge.
+- **`pr_list` is deferred** (low local evidence; YAGNI until it appears).
+- Forge verbs **return a `handle`**, so `get_log` is the universal drill-down for CI logs and diffs.
+- Instance (base URL) + read-scoped token are **per-instance, human-authored, non-agent-mutable**
+  config — never agent input. See `forge-security-model.md`.
 
 ## Output contract
 
@@ -28,7 +48,8 @@ evidence. See gotcha **G11**.
 - **Failure (test)** → normalized `failures[]` (class, test, message, `file:line`, project-side
   stack frames), with caps that truncate noise but never signal (pillar P4).
 - **Failure (operational)** → enumerated `code` (`NO_MANAGER_DETECTED`, `TOOL_NOT_INSTALLED`,
-  `DEPS_NOT_INSTALLED`, `REPORT_NOT_PRODUCED`, `TIMEOUT`, `INVALID_PATH`, `AMBIGUOUS_SCOPE`, …) +
+  `DEPS_NOT_INSTALLED`, `REPORT_NOT_PRODUCED`, `TIMEOUT`, `INVALID_PATH`, `AMBIGUOUS_SCOPE`,
+  `RESOURCE_BUSY`, …) +
   message + actionable `hint`. Distinct from test failures so the agent branches deterministically.
 - **Preflight** → before `run_tests`/`build`, if dependencies are missing or out of sync with the
   lockfile, return `DEPS_NOT_INSTALLED` (hint: "run `install`") instead of letting the agent hit a
@@ -44,7 +65,7 @@ single schema.
 > Normalizing dissimilar frameworks into one schema is the project's riskiest technical bet — which
 > is why v1 deliberately spans **three dissimilar report formats** (JUnit XML, `jest --json`,
 > `go test -json`) to validate the universal schema from day one rather than baking in JUnit
-> assumptions.
+> assumptions. See [`schema-divergence-map.md`](./schema-divergence-map.md) for the divergence axes.
 
 > **Reporter injection is per test *framework*, not per manager** (gotcha **G12**). The JVM side is
 > easy — Surefire/Failsafe emit standardized JUnit XML regardless of JUnit4/5/TestNG. The Node side
