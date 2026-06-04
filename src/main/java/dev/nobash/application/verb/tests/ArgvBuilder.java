@@ -1,6 +1,7 @@
 package dev.nobash.application.verb.tests;
 
 import dev.nobash.domain.port.out.ExecSpec;
+import io.micronaut.core.annotation.Nullable;
 import jakarta.inject.Singleton;
 
 import java.util.ArrayList;
@@ -26,6 +27,15 @@ public class ArgvBuilder {
     public static final String REPORTS_DIR_FLAG = "-Dsurefire.reportsDirectory=";
 
     /**
+     * The MCP-controlled test-selector flag prefix (issue #9). Never an agent free-flag — the
+     * agent supplies a structured {@link TestTarget} via typed {@code @ToolArg}s; the MCP
+     * translates the validated target into this token and injects it. The agent's own
+     * {@code -Dtest=…} in the {@code flags} parameter is dropped by the allowlist before
+     * it ever reaches here.
+     */
+    public static final String TEST_SELECTOR_FLAG = "-Dtest=";
+
+    /**
      * @param vettedFlags flags already filtered through the allowlist (never raw agent input)
      * @return an {@link ExecSpec} whose argv is {@code [mvn, -B, test, <vettedFlags...>]}
      */
@@ -49,7 +59,29 @@ public class ArgvBuilder {
      */
     public ExecSpec buildTestArgv(List<String> vettedFlags, String freshReportsDir, String workingDir,
                                   int timeoutSeconds) {
+        return buildTestArgv(vettedFlags, freshReportsDir, workingDir, timeoutSeconds, null);
+    }
+
+    /**
+     * Build the full execution spec for a targeted run, injecting both the MCP-controlled
+     * {@code -Dsurefire.reportsDirectory=<freshReportsDir>} flag (D27) and, when a target is
+     * present, the MCP-controlled {@code -Dtest=<value>} flag (issue #9). Both are MCP-injected
+     * controlled values — never agent free-flags. The target is injected BEFORE the reports-dir
+     * flag so the argv order is deterministic and predictable.
+     *
+     * @param vettedFlags     flags already filtered through the allowlist (never raw agent input)
+     * @param freshReportsDir the unique, empty-before-exec reports directory (MCP-controlled)
+     * @param workingDir      the module directory the manager runs in
+     * @param timeoutSeconds  the already-clamped hard deadline the executor enforces (issue #6)
+     * @param target          an optional, already-validated structured target; {@code null} → full suite
+     * @return the {@link ExecSpec} to hand to the executor seam
+     */
+    public ExecSpec buildTestArgv(List<String> vettedFlags, String freshReportsDir, String workingDir,
+                                  int timeoutSeconds, @Nullable TestTarget target) {
         List<String> argv = baseArgv(vettedFlags);
+        if (target != null) {
+            argv.add(target.toArgvToken());
+        }
         argv.add(REPORTS_DIR_FLAG + freshReportsDir);
         return new ExecSpec(argv, workingDir, timeoutSeconds);
     }

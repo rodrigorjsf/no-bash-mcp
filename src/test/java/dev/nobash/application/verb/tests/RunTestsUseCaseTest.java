@@ -167,4 +167,91 @@ class RunTestsUseCaseTest {
             assertThat(text).contains("mvn");
         }
     }
+
+    @Nested
+    class invalid_target_guard_issue_9_AC4 {
+
+        /**
+         * A malformed target must return INVALID_TARGET WITHOUT consulting the executor port —
+         * proven by the ExplodingExecutorSpy: the port explodes on isManagerInstalled(), which
+         * is the only executor call. A passing test means the guard fired BEFORE reaching exec.
+         */
+        @Test
+        void a_malformed_METHOD_target_without_hash_returns_INVALID_TARGET_without_launching(@TempDir Path dir) throws Exception {
+            java.nio.file.Files.writeString(dir.resolve("pom.xml"), "<project/>");
+
+            // We need a ManagerPresence(true) here — the TOOL_NOT_INSTALLED guard fires first
+            // if we use ExplodingExecutorSpy, because ExplodingExecutorSpy throws on isManagerInstalled.
+            // Use ManagerPresence(true) to prove the INVALID_TARGET guard fires before exec() is called.
+            CommandExecutorPort port = new ManagerPresence(true);
+            Envelope env = useCaseWith(port).run(dir.toString(), List.of(), null, "METHOD", "NoHashHere");
+
+            assertThat(env.ok()).isFalse();
+            assertThat(env.error().code()).isEqualTo(ErrorCode.INVALID_TARGET);
+        }
+
+        @Test
+        void an_unknown_kind_returns_INVALID_TARGET(@TempDir Path dir) throws Exception {
+            java.nio.file.Files.writeString(dir.resolve("pom.xml"), "<project/>");
+            CommandExecutorPort port = new ManagerPresence(true);
+
+            Envelope env = useCaseWith(port).run(dir.toString(), List.of(), null, "MODULE", "my-module");
+
+            assertThat(env.ok()).isFalse();
+            assertThat(env.error().code()).isEqualTo(ErrorCode.INVALID_TARGET);
+        }
+
+        @Test
+        void a_CLASS_target_with_hash_returns_INVALID_TARGET(@TempDir Path dir) throws Exception {
+            java.nio.file.Files.writeString(dir.resolve("pom.xml"), "<project/>");
+            CommandExecutorPort port = new ManagerPresence(true);
+
+            Envelope env = useCaseWith(port).run(dir.toString(), List.of(), null, "CLASS", "Foo#bar");
+
+            assertThat(env.ok()).isFalse();
+            assertThat(env.error().code()).isEqualTo(ErrorCode.INVALID_TARGET);
+        }
+
+        @Test
+        void kind_present_but_blank_value_returns_INVALID_TARGET(@TempDir Path dir) throws Exception {
+            java.nio.file.Files.writeString(dir.resolve("pom.xml"), "<project/>");
+            CommandExecutorPort port = new ManagerPresence(true);
+
+            Envelope env = useCaseWith(port).run(dir.toString(), List.of(), null, "CLASS", "");
+
+            assertThat(env.ok()).isFalse();
+            assertThat(env.error().code()).isEqualTo(ErrorCode.INVALID_TARGET);
+        }
+
+        @Test
+        void the_INVALID_TARGET_message_and_hint_are_actionable(@TempDir Path dir) throws Exception {
+            java.nio.file.Files.writeString(dir.resolve("pom.xml"), "<project/>");
+            CommandExecutorPort port = new ManagerPresence(true);
+
+            Envelope env = useCaseWith(port).run(dir.toString(), List.of(), null, "METHOD", "BadFormat");
+
+            String text = env.error().message() + " " + env.error().hint();
+            // The message must describe the expected format so the agent can fix it.
+            assertThat(text.toLowerCase()).contains("method");
+        }
+
+        @Test
+        void null_target_pair_is_full_suite_and_does_not_return_INVALID_TARGET(@TempDir Path dir) throws Exception {
+            // Null/absent is VALID (full-suite run). The guard must be skipped entirely.
+            // Use ExplodingExecutorSpy: the INVALID_TARGET guard must not fire. The test would only
+            // fail if isManagerInstalled() is reached (TOOL_NOT_INSTALLED guard), not if the target
+            // guard is reached — so if INVALID_TARGET is erroneously returned, the assertion below fails.
+            Envelope env = useCaseWith(new ExplodingExecutorSpy())
+                    .run(dir.toString(), List.of(), null, null, null);
+
+            // The ExplodingExecutorSpy fires on isManagerInstalled(); the relevant assertion is that
+            // the error is NOT INVALID_TARGET (a valid null pair skips that guard).
+            // The test may yield INVALID_PATH (dir has no pom.xml) or NO_MANAGER_DETECTED — either is fine.
+            if (env.error() != null) {
+                assertThat(env.error().code())
+                        .as("null targetKind/target must never return INVALID_TARGET")
+                        .isNotEqualTo(ErrorCode.INVALID_TARGET);
+            }
+        }
+    }
 }

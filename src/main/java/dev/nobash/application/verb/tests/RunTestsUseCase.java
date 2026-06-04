@@ -12,6 +12,7 @@ import dev.nobash.domain.port.out.ExecSpec;
 import dev.nobash.domain.result.NormalizedRun;
 import dev.nobash.domain.result.SurefireNormalizer;
 import dev.nobash.infra.concurrency.ModuleLock;
+import io.micronaut.core.annotation.Nullable;
 import jakarta.inject.Singleton;
 
 import java.io.IOException;
@@ -78,6 +79,9 @@ public class RunTestsUseCase {
     }
 
     /**
+     * Full-suite run with no target selector (backward-compatible overload for existing callers).
+     * Delegates to {@link #run(String, List, Integer, String, String)}.
+     *
      * @param path    the project directory (optional at the wire; null fails closed)
      * @param flags   agent-supplied flags (untrusted; vetted by the allowlist)
      * @param timeout the agent's requested deadline in seconds; clamped (null/non-positive →
@@ -85,6 +89,31 @@ public class RunTestsUseCase {
      * @return the result envelope (success, test-failure, or operational-error)
      */
     public Envelope run(String path, List<String> flags, Integer timeout) {
+        return run(path, flags, timeout, null, null);
+    }
+
+    /**
+     * Run with an optional structured target selector (issue #9, AC1–AC4). The agent supplies
+     * the target as two typed values ({@code targetKind} / {@code target}); the MCP validates
+     * them into a {@link TestTarget} (a pre-exec guard) and, when present, injects
+     * {@code -Dtest=<value>} into the argv as a controlled value — exactly like the
+     * {@code -Dsurefire.reportsDirectory=} injection.
+     *
+     * <p>Guard order: {@code INVALID_PATH} → {@code NO_MANAGER_DETECTED} → {@code TOOL_NOT_INSTALLED}
+     * → {@code INVALID_TARGET} → {@code RESOURCE_BUSY}. The target guard fires BEFORE the lock
+     * is acquired, so a malformed target never blocks a concurrent run. The {@code RESOURCE_BUSY}
+     * key is {@code realpath(moduleDir)} regardless of the target — different targets on the same
+     * module still collide (D22, ADR-0005).</p>
+     *
+     * @param path        the project directory (optional at the wire; null fails closed)
+     * @param flags       agent-supplied flags (untrusted; vetted by the allowlist)
+     * @param timeout     the agent's requested deadline in seconds; clamped as before
+     * @param targetKind  the agent-supplied kind ({@code CLASS} / {@code METHOD}); null → full suite
+     * @param targetValue the agent-supplied test identity value; null → full suite
+     * @return the result envelope (success, test-failure, or operational-error)
+     */
+    public Envelope run(String path, List<String> flags, Integer timeout,
+                        @Nullable String targetKind, @Nullable String targetValue) {
         // Guard 1 — INVALID_PATH (null / missing / not-a-directory). No confinement claim.
         if (path == null || path.isBlank()) {
             return Envelope.operationalError(VERB, ErrorCode.INVALID_PATH,
@@ -122,11 +151,25 @@ public class RunTestsUseCase {
         // Preflight (DEPS_NOT_INSTALLED) is a Maven no-op (D21): deps resolve on demand from
         // ~/.m2 during the build, so there is nothing to check before exec. Pass through.
 
-        // Guard 4 — RESOURCE_BUSY. A mutating run holds a per-module lock keyed on the canonical
+        // Guard 4 — INVALID_TARGET. Validate the structured target selector BEFORE acquiring the
+        // lock: a malformed target never blocks a concurrent run on the same module. The validation
+        // is a pre-exec guard (no process launched on a malformed target, AC4). null/absent pair
+        // passes cleanly → full-suite run (the guard is skipped).
+        final TestTarget target;
+        try {
+            target = TestTarget.parse(targetKind, targetValue);
+        } catch (TestTarget.MalformedTargetException e) {
+            return Envelope.operationalError(VERB, ErrorCode.INVALID_TARGET,
+                    e.getMessage(),
+                    "Provide a valid targetKind (CLASS or METHOD) and target value. "
+                            + "For CLASS: 'FooTest'. For METHOD: 'FooTest#testBar'.");
+        }
+
+        // Guard 5 — RESOURCE_BUSY. A mutating run holds a per-module lock keyed on the canonical
         // realpath(moduleDir) (alias paths collapse to one key). A second same-module run while the
         // first holds the lock fails fast — never blocks (ADR-0005, D22). A target selector does
-        // NOT change the key; different modules proceed concurrently. Acquired AFTER the three
-        // guards so a busy module is reported only for an otherwise-runnable request.
+        // NOT change the key; different targets on the same module still collide. Acquired AFTER
+        // all pre-exec guards so a busy module is reported only for an otherwise-runnable request.
         boolean acquired;
         try {
             acquired = moduleLock.tryAcquire(dir);
@@ -143,7 +186,7 @@ public class RunTestsUseCase {
         // The lock is released on EVERY exit path (success, test-failure, TIMEOUT, REPORT_NOT_PRODUCED,
         // NO_TESTS_RUN, and any thrown exception) by the finally below.
         try {
-            return runLocked(dir, flags, timeout);
+            return runLocked(dir, flags, timeout, target);
         } finally {
             try {
                 moduleLock.release(dir);
@@ -157,18 +200,22 @@ public class RunTestsUseCase {
      * The locked execution body: build the spec (with the clamped timeout), launch the trusted
      * manager, and assemble the result envelope. Runs only while this verb holds the module lock;
      * the caller's {@code finally} releases the lock on every exit path.
+     *
+     * @param target the validated structured target selector, or {@code null} for a full-suite run
      */
-    private Envelope runLocked(Path dir, List<String> flags, Integer timeout) {
+    private Envelope runLocked(Path dir, List<String> flags, Integer timeout,
+                                @Nullable TestTarget target) {
         // Allocate a unique, empty-before-exec reports directory so any XML in it is necessarily
         // from THIS run (report freshness by construction, D27). Argv vetting drops every agent
         // flag outside the allowlist; the reportsDirectory flag is then injected by the MCP.
+        // When a target is present, -Dtest=<value> is injected by the MCP (never agent input).
         Path freshReportsDir = allocateFreshReportsDir();
         List<String> vetted = flagPolicy.filter(flags == null ? List.of() : flags);
         // Clamp the agent's requested timeout: null/non-positive → default, > cap → cap (the agent
         // may raise it up to but not beyond the cap). The clamped value rides the ExecSpec.
         int timeoutSeconds = TimeoutPolicy.clamp(timeout);
         ExecSpec spec = argvBuilder.buildTestArgv(vetted, freshReportsDir.toString(), dir.toString(),
-                timeoutSeconds);
+                timeoutSeconds, target);
 
         ExecResult result = executor.execute(spec);
 

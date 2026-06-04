@@ -42,7 +42,7 @@ class SmokeTest {
 
     @Test
     void the_wired_run_tests_tool_enforces_the_invalid_path_guard() {
-        Envelope env = buildTools.run_tests("/no/such/path/wiring-smoke", List.of(), null);
+        Envelope env = buildTools.run_tests("/no/such/path/wiring-smoke", List.of(), null, null, null);
 
         assertThat(env.ok()).isFalse();
         assertThat(env.error().code()).isEqualTo(ErrorCode.INVALID_PATH);
