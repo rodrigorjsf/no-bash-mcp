@@ -1,12 +1,15 @@
 # Application architecture: lightweight hexagonal + per-verb feature slices, single module
 
-**Status:** proposed — the macro-architecture is chosen (evidence-backed, user-confirmed); it is
-promoted to **accepted** once `/prototype` validates the schema/envelope/dispatch data model, honoring
-`CLAUDE.md`'s "*/prototype* to flesh out the chosen design **before committing to it**" rule. The
-macro-architecture decided here (hexagonal / single-module / `micronaut-http-client-jdk`) is
-independent of the still-unfrozen **data-model** layer (the universal-schema bet — deferred to the
-spike + a post-spike ADR); `/prototype` is the gate that could surface a port-boundary problem and so
-is what promotes this ADR. DESIGN.md is written from the `/prototype` output, not before it.
+**Status:** **accepted** (2026-06-04) — promoted from *proposed* by the `/prototype` pass, which
+validated the schema/dispatch data model and the two outbound-port boundaries against **three real
+reports** (Surefire JUnit-XML, `jest --json` 29.7.0, `go test -json` 1.26). Both undecided bets held:
+(1) the universal schema folds all three with the **no-test-owner failure as a first-class type** (not
+a degenerate empty test), and (2) `CommandExecutorPort` / `ForgePort` stay **format-agnostic** (the
+report-source even differs — file for Maven, stdout for Go — and the port absorbs it cleanly). Evidence:
+[`prototype/NOTES.md`](../../prototype/NOTES.md). The concrete architecture is elaborated in
+[`DESIGN.md`](../../DESIGN.md), written from that prototype output per `CLAUDE.md`'s "*/prototype* to
+flesh out the chosen design **before committing to it**" rule. Field-level names of the normalized
+schema remain provisional until the universal-schema spike freezes them in a follow-up ADR.
 
 The before-coding phase chose the code architecture **from a survey** of real JVM MCP servers and
 current Java application architectures (not by invention — see `CLAUDE.md`). The survey, rationale,

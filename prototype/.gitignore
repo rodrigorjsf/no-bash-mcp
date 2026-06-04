@@ -1,0 +1,6 @@
+# Throwaway prototype build artifacts — never commit these.
+target/
+node_modules/
+fixtures/*/target/
+fixtures/*/node_modules/
+fixtures/jest-gen/package-lock.json

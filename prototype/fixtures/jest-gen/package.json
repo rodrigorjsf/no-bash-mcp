@@ -1,0 +1,12 @@
+{
+  "name": "jest-gen",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Throwaway fixture for the no-bash-mcp universal-schema prototype: produces a real `jest --json` report exercising the hard divergence axes.",
+  "scripts": {
+    "report": "jest --json"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  }
+}

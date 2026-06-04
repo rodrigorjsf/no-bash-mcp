@@ -1,0 +1,39 @@
+{"Time":"2026-06-04T00:12:36.845448032-03:00","Action":"start","Package":"gofix/broken"}
+{"Time":"2026-06-04T00:12:36.855856521-03:00","Action":"output","Package":"gofix/broken","Output":"panic: config missing: simulated init() panic with no test owner\n"}
+{"Time":"2026-06-04T00:12:36.855989605-03:00","Action":"output","Package":"gofix/broken","Output":"\n"}
+{"Time":"2026-06-04T00:12:36.856001004-03:00","Action":"output","Package":"gofix/broken","Output":"goroutine 1 [running]:\n"}
+{"Time":"2026-06-04T00:12:36.856012502-03:00","Action":"output","Package":"gofix/broken","Output":"gofix/broken.init.0()\n"}
+{"Time":"2026-06-04T00:12:36.856022701-03:00","Action":"output","Package":"gofix/broken","Output":"\t/home/rodrigo/Workspace/no-bash-mcp/prototype/fixtures/go-gen/broken/broken.go:8 +0x25\n"}
+{"Time":"2026-06-04T00:12:36.856089893-03:00","Action":"output","Package":"gofix/broken","Output":"FAIL\tgofix/broken\t0.005s\n"}
+{"Time":"2026-06-04T00:12:36.85612119-03:00","Action":"fail","Package":"gofix/broken","Elapsed":0.011}
+{"Time":"2026-06-04T00:12:36.858601801-03:00","Action":"start","Package":"gofix/calc"}
+{"Time":"2026-06-04T00:12:36.859872353-03:00","Action":"run","Package":"gofix/calc","Test":"TestAddPasses"}
+{"Time":"2026-06-04T00:12:36.859889251-03:00","Action":"output","Package":"gofix/calc","Test":"TestAddPasses","Output":"=== RUN   TestAddPasses\n"}
+{"Time":"2026-06-04T00:12:36.859918448-03:00","Action":"output","Package":"gofix/calc","Test":"TestAddPasses","Output":"--- PASS: TestAddPasses (0.00s)\n"}
+{"Time":"2026-06-04T00:12:36.859921348-03:00","Action":"pass","Package":"gofix/calc","Test":"TestAddPasses","Elapsed":0}
+{"Time":"2026-06-04T00:12:36.859924247-03:00","Action":"run","Package":"gofix/calc","Test":"TestAddFails"}
+{"Time":"2026-06-04T00:12:36.859925947-03:00","Action":"output","Package":"gofix/calc","Test":"TestAddFails","Output":"=== RUN   TestAddFails\n"}
+{"Time":"2026-06-04T00:12:36.859927747-03:00","Action":"output","Package":"gofix/calc","Test":"TestAddFails","Output":"    calc_test.go:17: Add(2,2) = 4, want 5\n"}
+{"Time":"2026-06-04T00:12:36.859930446-03:00","Action":"output","Package":"gofix/calc","Test":"TestAddFails","Output":"--- FAIL: TestAddFails (0.00s)\n"}
+{"Time":"2026-06-04T00:12:36.859932546-03:00","Action":"fail","Package":"gofix/calc","Test":"TestAddFails","Elapsed":0}
+{"Time":"2026-06-04T00:12:36.859934446-03:00","Action":"run","Package":"gofix/calc","Test":"TestSkipped"}
+{"Time":"2026-06-04T00:12:36.859936146-03:00","Action":"output","Package":"gofix/calc","Test":"TestSkipped","Output":"=== RUN   TestSkipped\n"}
+{"Time":"2026-06-04T00:12:36.859939345-03:00","Action":"output","Package":"gofix/calc","Test":"TestSkipped","Output":"    calc_test.go:23: not implemented on this platform\n"}
+{"Time":"2026-06-04T00:12:36.859941545-03:00","Action":"output","Package":"gofix/calc","Test":"TestSkipped","Output":"--- SKIP: TestSkipped (0.00s)\n"}
+{"Time":"2026-06-04T00:12:36.859943545-03:00","Action":"skip","Package":"gofix/calc","Test":"TestSkipped","Elapsed":0}
+{"Time":"2026-06-04T00:12:36.859945345-03:00","Action":"run","Package":"gofix/calc","Test":"TestTableDriven"}
+{"Time":"2026-06-04T00:12:36.859947045-03:00","Action":"output","Package":"gofix/calc","Test":"TestTableDriven","Output":"=== RUN   TestTableDriven\n"}
+{"Time":"2026-06-04T00:12:36.859949044-03:00","Action":"run","Package":"gofix/calc","Test":"TestTableDriven/two_plus_two"}
+{"Time":"2026-06-04T00:12:36.859950844-03:00","Action":"output","Package":"gofix/calc","Test":"TestTableDriven/two_plus_two","Output":"=== RUN   TestTableDriven/two_plus_two\n"}
+{"Time":"2026-06-04T00:12:36.859980841-03:00","Action":"output","Package":"gofix/calc","Test":"TestTableDriven/two_plus_two","Output":"--- PASS: TestTableDriven/two_plus_two (0.00s)\n"}
+{"Time":"2026-06-04T00:12:36.85998814-03:00","Action":"pass","Package":"gofix/calc","Test":"TestTableDriven/two_plus_two","Elapsed":0}
+{"Time":"2026-06-04T00:12:36.859991139-03:00","Action":"run","Package":"gofix/calc","Test":"TestTableDriven/wrong_on_purpose"}
+{"Time":"2026-06-04T00:12:36.859993039-03:00","Action":"output","Package":"gofix/calc","Test":"TestTableDriven/wrong_on_purpose","Output":"=== RUN   TestTableDriven/wrong_on_purpose\n"}
+{"Time":"2026-06-04T00:12:36.860003538-03:00","Action":"output","Package":"gofix/calc","Test":"TestTableDriven/wrong_on_purpose","Output":"    calc_test.go:39: Add(1,1) = 2, want 3\n"}
+{"Time":"2026-06-04T00:12:36.860006838-03:00","Action":"output","Package":"gofix/calc","Test":"TestTableDriven/wrong_on_purpose","Output":"--- FAIL: TestTableDriven/wrong_on_purpose (0.00s)\n"}
+{"Time":"2026-06-04T00:12:36.860008837-03:00","Action":"fail","Package":"gofix/calc","Test":"TestTableDriven/wrong_on_purpose","Elapsed":0}
+{"Time":"2026-06-04T00:12:36.860011037-03:00","Action":"output","Package":"gofix/calc","Test":"TestTableDriven","Output":"--- FAIL: TestTableDriven (0.00s)\n"}
+{"Time":"2026-06-04T00:12:36.860013137-03:00","Action":"fail","Package":"gofix/calc","Test":"TestTableDriven","Elapsed":0}
+{"Time":"2026-06-04T00:12:36.860014937-03:00","Action":"output","Package":"gofix/calc","Output":"FAIL\n"}
+{"Time":"2026-06-04T00:12:36.860186317-03:00","Action":"output","Package":"gofix/calc","Output":"FAIL\tgofix/calc\t0.002s\n"}
+{"Time":"2026-06-04T00:12:36.860199515-03:00","Action":"fail","Package":"gofix/calc","Elapsed":0.002}

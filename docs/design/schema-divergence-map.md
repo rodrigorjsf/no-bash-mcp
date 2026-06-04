@@ -19,10 +19,18 @@ settle.
 | 2 | Outcome taxonomy | failure / error / skipped | passed / failed / pending / skipped / todo | pass / fail / skip (+ build-fail / panic implicit) |
 | 3 | `file:line` | often **absent** — parse from `<failure>` stacktrace | **not a field** — parse from `failureMessages[]` stack | **not a field** — parse from `Output` lines |
 | 4 | Message vs assertion diff | `message` attr + stacktrace body | `failureMessages[]` (message + diff + stack as one string) | interleaved in `Output` text |
-| 5 | Failure with no single test owner | suite-level `<error>` / setup testcase | file-level (`beforeAll` throws) → assertions vanish + top-level message | **package-level FAIL** with no `Test` (build failure, `TestMain`, `init` panic) |
+| 5 | Failure with no single test owner | suite-level `<error>` / setup testcase | **collection/module-load failure** → `assertionResults: []` + file-level `message` (⚠ a `beforeAll` throw is attributed **per-test**, not no-owner — see note) | **package-level FAIL** with no `Test` (build failure, `TestMain`, `init` panic) |
 | 6 | Captured output | `system-out` / `system-err` per suite/case | console per test (reporter-dependent) | `Output` events interleaved |
 | 7 | Parametrized identity | `name[0]`, display names | `test.each` interpolated titles | subtests `Test/case` |
 | 8 | Retry / flaky *(lower-confidence; confirm in spike)* | Surefire `flakyFailure` / `rerunFailure` | `jest.retryTimes` re-runs | `-count` / tooling re-runs; no native retry marker |
+
+> **Axis-5 correction (empirical, jest 29.7.0).** The `/prototype` pass parsed a real `jest --json`
+> report and found that a `beforeAll` throw does **not** make assertions vanish — jest attributes the
+> hook failure to **each test** in the suite (they appear as failed `assertionResults`). jest's genuine
+> no-test-owner case is a **collection/module-load failure** (e.g. a top-level throw), which yields an
+> empty `assertionResults` plus a file-level `message`. The original "assertions vanish on `beforeAll`"
+> wording was disproved against the real report. The universal schema handles both shapes (per-test →
+> a test finding; collection failure → a no-owner finding). Evidence: the throwaway prototype's NOTES.
 
 ## Safe to assert now (without freezing field names)
 
