@@ -1,5 +1,7 @@
 package dev.nobash.adapter.out.ecosystem.maven;
 
+import dev.nobash.domain.port.out.ExecResult;
+import dev.nobash.domain.port.out.ExecSpec;
 import org.junit.jupiter.api.DisplayNameGeneration;
 import org.junit.jupiter.api.DisplayNameGenerator;
 import org.junit.jupiter.api.Nested;
@@ -8,8 +10,10 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * AC5 (adapter level) — the Maven adapter resolves the <em>trusted system</em> {@code mvn}
@@ -61,6 +65,78 @@ class MavenCommandExecutorTest {
             MavenCommandExecutor executor = new MavenCommandExecutor(resolver);
 
             assertThat(executor.isManagerInstalled()).isFalse();
+        }
+    }
+
+    @Nested
+    class execute_launches_the_argv_array_directly {
+
+        private MavenCommandExecutor anyExecutor() {
+            // Resolution seam is irrelevant to execute(); a present resolver keeps DI shape.
+            return new MavenCommandExecutor(manager -> true);
+        }
+
+        @Test
+        void the_process_command_is_the_argv_array_starting_with_the_system_mvn_never_mvnw() {
+            // AC9 — the launched command is EXACTLY the argv array; argv[0] is the trusted
+            // system "mvn" name (resolved on PATH by the OS), never "mvnw" / "./mvnw" (ADR-0008).
+            // Proven on the ProcessBuilder the adapter constructs — no spawn needed for this rule.
+            ExecSpec spec = new ExecSpec(List.of("mvn", "-B", "test"), null);
+
+            ProcessBuilder pb = anyExecutor().toProcessBuilder(spec);
+
+            assertThat(pb.command()).containsExactly("mvn", "-B", "test");
+            assertThat(pb.command().get(0)).isEqualTo("mvn");
+            assertThat(pb.command()).noneMatch(token -> token.contains("mvnw"));
+        }
+
+        @Test
+        void no_shell_interpreter_is_prepended_to_the_launched_command() {
+            // The argv is launched directly — no /bin/sh -c wrapping (security-model.md).
+            ExecSpec spec = new ExecSpec(List.of("mvn", "-B", "test", "; rm -rf /"), null);
+
+            ProcessBuilder pb = anyExecutor().toProcessBuilder(spec);
+
+            assertThat(pb.command()).doesNotContain("/bin/sh", "-c", "sh", "bash", "cmd");
+            // The injection token survives as one inert element, never split into a new command.
+            assertThat(pb.command()).contains("; rm -rf /");
+        }
+
+        @Test
+        void the_working_directory_is_set_when_present() {
+            ExecSpec spec = new ExecSpec(List.of("mvn", "-B", "test"), "/tmp/some-module");
+
+            ProcessBuilder pb = anyExecutor().toProcessBuilder(spec);
+
+            assertThat(pb.directory()).isNotNull();
+            assertThat(pb.directory().getPath()).isEqualTo("/tmp/some-module");
+        }
+
+        @Test
+        void a_real_spawn_captures_exit_code_stdout_and_stderr_with_timed_out_false(@TempDir Path bin) throws Exception {
+            // A POSIX-only smoke of a REAL ProcessBuilder spawn (the host build runs on Linux);
+            // skipped on Windows where a "#!/bin/sh" script is not directly executable.
+            assumeTrue(!System.getProperty("os.name", "").toLowerCase().contains("win"),
+                    "POSIX shell script fixture — Windows uses a .cmd/.bat shim path");
+            // A fake "mvn" that writes to both streams and exits non-zero, proving the adapter
+            // captures all three channels from a REAL ProcessBuilder spawn. argv[0] is the
+            // absolute path of the fake so resolution is deterministic in the test sandbox.
+            Path fakeMvn = bin.resolve("mvn");
+            Files.writeString(fakeMvn, "#!/bin/sh\n"
+                    + "echo 'out line'\n"
+                    + "echo 'err line' 1>&2\n"
+                    + "exit 7\n");
+            fakeMvn.toFile().setExecutable(true);
+
+            ExecSpec spec = new ExecSpec(List.of(fakeMvn.toString(), "-B", "test"), bin.toString());
+
+            ExecResult result = anyExecutor().execute(spec);
+
+            assertThat(result.exitCode()).isEqualTo(7);
+            assertThat(result.stdout()).contains("out line");
+            assertThat(result.stderr()).contains("err line");
+            // timedOut is define-and-read only in this slice — the real executor hardcodes false.
+            assertThat(result.timedOut()).isFalse();
         }
     }
 }

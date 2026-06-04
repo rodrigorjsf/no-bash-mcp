@@ -5,11 +5,11 @@ package dev.nobash.domain.port.out;
  * interface with zero framework annotations; the ecosystem adapter in
  * {@code adapter/out/ecosystem/*} satisfies it at startup via compile-time DI.
  *
- * <p>Scope for this slice: the port exposes only the launcher-resolution capability the
- * {@code TOOL_NOT_INSTALLED} guard needs ({@link #isManagerInstalled()}). Real execution
- * ({@code execute(ExecSpec) -> ExecResult}) is deliberately NOT defined here — that is a
- * later slice. This slice's {@code run_tests} stops at the operational-error gate and never
- * launches a process.</p>
+ * <p>It exposes the launcher-resolution capability the {@code TOOL_NOT_INSTALLED} guard needs
+ * ({@link #isManagerInstalled()}) and the generic execution capability
+ * ({@link #execute(ExecSpec)}). The port is <strong>report-agnostic</strong>: it returns the
+ * raw {@link ExecResult} (exit/stdout/stderr/timedOut) and knows nothing of tests, reports, or
+ * formats — reading and normalizing a report directory is the verb use-case's job.</p>
  */
 public interface CommandExecutorPort {
 
@@ -19,4 +19,14 @@ public interface CommandExecutorPort {
      * ({@code ./mvnw}), per ADR-0008.
      */
     boolean isManagerInstalled();
+
+    /**
+     * Run the given command and return its raw outcome. The implementation launches the
+     * explicit {@code argv} array directly (NO {@code /bin/sh -c}); {@code argv[0]} is the
+     * trusted system manager resolved on {@code PATH}, never a repo wrapper (ADR-0008).
+     *
+     * @param spec the argv array + working directory to run in
+     * @return the raw, report-agnostic execution result
+     */
+    ExecResult execute(ExecSpec spec);
 }
