@@ -2,8 +2,8 @@ package dev.nobash.domain.error;
 
 /**
  * The enumerated operational-error codes this slice can return (CONTEXT.md "Operational
- * error"). The full catalog ({@code TIMEOUT}, {@code RESOURCE_BUSY},
- * {@code DEPS_NOT_INSTALLED}, …) arrives with the slices that earn those codes.
+ * error"). The remaining catalog ({@code DEPS_NOT_INSTALLED}, {@code AMBIGUOUS_SCOPE}, …)
+ * arrives with the slices that earn those codes.
  *
  * <p>An operational error is a failure of the <em>operation itself</em> — distinct from a
  * test failure — so the agent branches deterministically on {@code code}.</p>
@@ -33,5 +33,21 @@ public enum ErrorCode {
      * The positive-evidence floor: distinct from {@link #REPORT_NOT_PRODUCED} (no report at
      * all) and from a real failure; closes the vacuous-green class.
      */
-    NO_TESTS_RUN
+    NO_TESTS_RUN,
+
+    /**
+     * The run exceeded its {@code timeout} and the executor killed the whole process tree
+     * (operational-model.md "Timeout", issue #6). The MCP never hangs; any partial output that
+     * drained before the kill is retained behind the {@code handle}. Distinct from a test
+     * failure — the operation itself was cut short, so {@code ok=false} regardless of partials.
+     */
+    TIMEOUT,
+
+    /**
+     * A second mutating verb targeted the SAME module while the first still held the per-module
+     * lock (ADR-0005, D22). Fail-fast, never block: the agent is almost always double-issuing,
+     * so the error surfaces the duplicate instead of silently serializing it. The {@code hint}
+     * says the agent may retry once the first run frees the module.
+     */
+    RESOURCE_BUSY
 }
