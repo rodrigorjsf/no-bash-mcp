@@ -239,13 +239,15 @@ report-absence asymmetry.
   **system `mvn`** via `ProcessBuilder` (**never `./mvnw`** — ADR-0008), reads `target/surefire-reports/*.xml`.
   (Maven needs **no reporter-flag injection** — Surefire writes JUnit XML by default; the injection seam
   exists but injects nothing here.)
-- **Report-freshness gate (D27):** stamp `start` before exec; the Surefire normalizer accepts only files
-  with `mtime >= start` (stale prior-run XMLs are ignored → no back-door false-green; no fresh file →
-  `REPORT_NOT_PRODUCED`).
-- Surefire normalizer → frozen `NormalizedRun` (ADR-0007; counts from `<testcase>`, rule 5; `tool="surefire"`).
-- `Envelope` (`manager="mvn"`) + in-memory run-cache + `Handle`. **Envelope `ok` is a failure floor (D28):**
-  `ok = NormalizedRun.ok() && exitCode==0 && !timedOut` — a non-zero exit never greens; the frozen domain
-  `ok()` stays findings-only.
+- **Report freshness by construction (D27, revised):** inject a unique per-run reports dir
+  (`-Dsurefire.reportsDirectory=<fresh tmp>`, MCP-controlled); empty-before → any XML is this run's; empty
+  after exec → `REPORT_NOT_PRODUCED`. (Supersedes the first-cut `mtime >= start` gate, which an adversarial
+  review showed reopens the stale-green hole at coarse fs mtime granularity.)
+- Pure normalizer → frozen `NormalizedRun` (ADR-0007; counts from `<testcase>`, rule 5; `tool="surefire"`).
+- `Envelope` (`manager="mvn"`, agent-facing `failures[]` carrying `Finding` w/ `kind` discriminator — D30)
+  + in-memory run-cache + `Handle`. **Envelope `ok` is a positive-evidence failure floor (D28+D29):**
+  `ok = NormalizedRun.ok() && exitCode==0 && !timedOut && executedTests>0` (executed = passed+failed+errored);
+  a fresh report with zero executed tests → `NO_TESTS_RUN`. Frozen domain `ok()` stays findings-only.
 - `get_log(handle, filter?)` — in-memory last-N (~10); **2 filters**: by failing-test identity → that
   finding's full detail/stacktrace; no-filter → whole retained output. (TTL/byte-cap/disk-spill **deferred**
   to an operational-hardening PRD.)
