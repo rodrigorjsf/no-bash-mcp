@@ -1,0 +1,5 @@
+flag
+-o
+--offline
+--fail-at-end
+-fae
