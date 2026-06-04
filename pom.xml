@@ -183,6 +183,66 @@
           </compilerArgs>
         </configuration>
       </plugin>
+      <plugin>
+        <!-- Copy all runtime dependencies to target/dependency/ before packaging.
+             This allows the thin jar's MANIFEST.MF Class-Path to reference them so
+             `java -jar no-bash-mcp-0.1.0-SNAPSHOT.jar` is fully self-contained for
+             the InspectorAcceptanceIT (issue #8). -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>copy-dependencies</id>
+            <phase>prepare-package</phase>
+            <goals>
+              <goal>copy-dependencies</goal>
+            </goals>
+            <configuration>
+              <outputDirectory>${project.build.directory}/dependency</outputDirectory>
+              <overWriteIfNewer>true</overWriteIfNewer>
+              <!-- Include runtime + compile scope only (not test, not provided) -->
+              <includeScope>runtime</includeScope>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <!-- Configure the thin jar MANIFEST.MF so 'java -jar' works without a fat jar.
+             Class-Path entries point to the dependency/ directory populated above. -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <configuration>
+          <archive>
+            <manifest>
+              <addClasspath>true</addClasspath>
+              <classpathPrefix>dependency/</classpathPrefix>
+              <mainClass>dev.nobash.Application</mainClass>
+            </manifest>
+          </archive>
+        </configuration>
+      </plugin>
+      <plugin>
+        <!-- Failsafe runs *IT.java in the integration-test/verify phase, keeping *Test.java
+             (Surefire, mvn test) strictly separate. The IT requires external prerequisites
+             (npx, MCP Inspector, jq, Java-25 system mvn) that are intentionally CI-gated;
+             it is never run as part of the inline unit gate. -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <executions>
+          <execution>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+            <configuration>
+              <!-- Pass the project build directory so the IT can locate the packaged jar -->
+              <systemPropertyVariables>
+                <project.build.directory>${project.build.directory}</project.build.directory>
+              </systemPropertyVariables>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
     </plugins>
   </build>
 
