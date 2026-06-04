@@ -54,3 +54,19 @@ The universal-schema spike (`spikes/s1-schema/`) froze the open items here:
 - **The recorded schema** — ADR-0007 is the freeze of record (after the spike, per documentation-first).
 - **Axis-5 jest correction** (above) and the **Go build-output/build-fail** handling (compile errors are
   JSON-wrapped, keyed by `ImportPath`) were both empirically settled by the spike.
+
+## Report-absence asymmetry (compile failure)
+
+A **9th divergence**, surfaced while scoping PRD-1 (decision-log **D25**): a compile failure produces
+*different shapes per ecosystem because the report formats differ*, not because the schema is
+inconsistent.
+
+| Ecosystem | On compile failure | Result |
+|---|---|---|
+| Go (`go test -json`) | Emits structured `build-output`/`build-fail` JSON events | Folded **into** the graph as `ContainerFinding(ERRORED)` (ADR-0007 rule 4) |
+| Maven (Surefire) | **No** report file is written (Surefire never runs) | Operational error **`REPORT_NOT_PRODUCED`** (+ hint "run `build`"); raw compiler output in the `handle` |
+
+The universal schema normalizes **reports**; when a report is absent there is nothing to fold, and
+folding it anyway would require stdout-scraping the compiler output (rejected by D8). The `build` verb
+(later PRD) owns compile-error → `file:line` parsing. This refines, and does not contradict, ADR-0007
+rule 2 (the ERRORED discriminator governs a finding *when one exists*).

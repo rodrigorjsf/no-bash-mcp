@@ -17,6 +17,7 @@ exfiltration, and any other command the *agent* composes on its own.
 | Aspect | Decision |
 |---|---|
 | Process launch | argv-array via `ProcessBuilder`. **Never** a shell string, **never** `/bin/sh -c`. |
+| Launcher resolution | The **trusted system manager** on `PATH` (`mvn`, `npm`, …), **never** a repo-authored wrapper (`./mvnw`, `./gradlew`). A wrapper is an agent-rewritable script (P8 → repo write access), so invoking it would make an ecosystem verb an agent-composed arbitrary-command vector. Absent manager → `TOOL_NOT_INSTALLED`. See **ADR-0008**. |
 | Composition / pipes | Not supported as free-form. Native pipes do not exist; only explicit, sanctioned operations. |
 | Windows shims | Package-manager launchers (`npm`, `mvn`, `gradle`, `pnpm`) are `.cmd`/`.bat`; the MCP resolves the concrete executable and validates args strictly. The invariant is *no agent-controlled shell string*, not *no OS process facility*. See gotcha **G13**. |
 | Why | Shell-string parsing/sanitization (escaping, metacharacters, aliases) is a known minefield and would break the guarantee. See gotcha **G1**. |
@@ -27,6 +28,18 @@ exfiltration, and any other command the *agent* composes on its own.
 - **Unknown flags are silently dropped** (per the original requirement) — they never reach the
   process.
 - **Free args** (paths, test names) are validated by **type**, not by a shell.
+
+**Allowlist principle (what an operation's seed admits).** Three categories are *never* allow-listed,
+regardless of operation: (1) flags that **defeat the verb** (e.g. `-DskipTests` / `-Dmaven.test.skip`
+on `run_tests` — they would false-green a clean run); (2) **arbitrary `-D` system properties** (e.g.
+`-Dmaven.repo.local=…`) — only specific, individually-vetted property keys are admitted, never a blanket
+`-D`; (3) flags whose only effect is **stdout verbosity** (`-X`, `-q`) — output is parsed from the
+report file, so they add noise without value. Test **selection** flags (`-Dtest=`, `-pl`) are *not*
+agent free-flags either: the structured target selector translates intent into `-Dtest=` and the MCP
+**injects** the controlled value.
+
+> **`run_tests`/Maven seed allowlist (PRD-1):** `-o`/`--offline`, `--fail-at-end`/`-fae` only. The seed
+> grows per concrete requirement; the categories above stay forbidden.
 
 ## Task execution governance (`run_task`)
 

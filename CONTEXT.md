@@ -25,8 +25,17 @@ _Avoid_: subcommand, action.
 
 **Manager**:
 A concrete package/build tool detected at a path (`mvn`, `npm`, `pnpm`, `yarn`, `go`). One
-ecosystem may have several interchangeable managers.
-_Avoid_: package manager, build tool, tool (when you mean the manager).
+ecosystem may have several interchangeable managers. The `Envelope`'s `manager` field holds this
+(e.g. `"mvn"` — never `"maven"`, which is the ecosystem).
+_Avoid_: package manager, build tool, tool (when you mean the manager — see **Reporter**).
+
+**Reporter**:
+The test tool that actually **produces** the machine-readable report the adapter parses (`surefire`
+for Maven, `jest`/`vitest`/`mocha` for Node, `go` for Go test). Distinct from the **Manager** (which
+launches the build) and the test **framework** (which the tests are written in, e.g. JUnit). The
+frozen `NormalizedRun.tool` field holds the Reporter — its name is the one place the codebase keeps
+the word "tool", and it means the Reporter, **never** the Manager.
+_Avoid_: tool (as a free word), runner, framework (when you mean the reporter).
 
 **Ecosystem**:
 A family of managers and conventions that share report formats and detection markers
