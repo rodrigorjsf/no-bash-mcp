@@ -45,8 +45,12 @@ settle.
 5. **Expected-vs-actual cannot be reliably structured** across all three → keep a `message` + a
    best-effort diff (axis 4).
 
-## What stays open until the spike
+## Resolved by the spike → [ADR-0007](../adr/0007-normalized-test-result-schema.md) (accepted)
 
-- Exact field names and the concrete struct.
-- Whether retry/flaky (axis 8) is modeled in v1 or deferred.
-- The recorded schema → an ADR **after** the spike, not before.
+The universal-schema spike (`spikes/s1-schema/`) froze the open items here:
+
+- **Exact field names and the concrete struct** — frozen in ADR-0007 (the §2 record graph).
+- **Retry/flaky (axis 8)** — **deferred** from v1 (ratified; no captured report carries a retry marker).
+- **The recorded schema** — ADR-0007 is the freeze of record (after the spike, per documentation-first).
+- **Axis-5 jest correction** (above) and the **Go build-output/build-fail** handling (compile errors are
+  JSON-wrapped, keyed by `ImportPath`) were both empirically settled by the spike.

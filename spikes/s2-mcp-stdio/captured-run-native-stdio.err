@@ -1,0 +1,3 @@
+[36m02:23:05.496[0;39m [1;30m[main][0;39m [34mINFO [0;39m [35mio.micronaut.runtime.Micronaut[0;39m - Startup completed in 11ms. Server Running: STDIO sync
+[36m02:23:05.497[0;39m [1;30m[pool-4-thread-1][0;39m [34mINFO [0;39m [35mi.m.server.McpAsyncServer[0;39m - Client initialize request - Protocol: 2024-11-05, Capabilities: ClientCapabilities[experimental=null, roots=null, sampling=null, elicitation=null], Info: Implementation[name=spike-client, title=null, version=0]
+[36m02:23:11.130[0;39m [1;30m[Thread-1][0;39m [34mINFO [0;39m [35mio.micronaut.runtime.Micronaut[0;39m - Embedded Application shutting down

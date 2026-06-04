@@ -1,0 +1,83 @@
+{"Time":"2026-06-04T01:37:18.90289652-03:00","Action":"start","Package":"spike/multipkg/initbroken"}
+{"Time":"2026-06-04T01:37:18.903147867-03:00","Action":"start","Package":"spike/multipkg/mathx"}
+{"Time":"2026-06-04T01:37:18.903323591-03:00","Action":"start","Package":"spike/multipkg/strx"}
+{"Time":"2026-06-04T01:37:18.904470236-03:00","Action":"run","Package":"spike/multipkg/mathx","Test":"TestAdd"}
+{"Time":"2026-06-04T01:37:18.904490815-03:00","Action":"output","Package":"spike/multipkg/mathx","Test":"TestAdd","Output":"=== RUN   TestAdd\n"}
+{"Time":"2026-06-04T01:37:18.904525181-03:00","Action":"output","Package":"spike/multipkg/mathx","Test":"TestAdd","Output":"--- PASS: TestAdd (0.00s)\n"}
+{"Time":"2026-06-04T01:37:18.904528977-03:00","Action":"pass","Package":"spike/multipkg/mathx","Test":"TestAdd","Elapsed":0}
+{"Time":"2026-06-04T01:37:18.904532374-03:00","Action":"run","Package":"spike/multipkg/mathx","Test":"TestAddTable"}
+{"Time":"2026-06-04T01:37:18.904534172-03:00","Action":"output","Package":"spike/multipkg/mathx","Test":"TestAddTable","Output":"=== RUN   TestAddTable\n"}
+{"Time":"2026-06-04T01:37:18.90453617-03:00","Action":"run","Package":"spike/multipkg/mathx","Test":"TestAddTable/pos"}
+{"Time":"2026-06-04T01:37:18.904537768-03:00","Action":"output","Package":"spike/multipkg/mathx","Test":"TestAddTable/pos","Output":"=== RUN   TestAddTable/pos\n"}
+{"Time":"2026-06-04T01:37:18.904540365-03:00","Action":"output","Package":"spike/multipkg/mathx","Test":"TestAddTable/pos","Output":"--- PASS: TestAddTable/pos (0.00s)\n"}
+{"Time":"2026-06-04T01:37:18.904542363-03:00","Action":"pass","Package":"spike/multipkg/mathx","Test":"TestAddTable/pos","Elapsed":0}
+{"Time":"2026-06-04T01:37:18.904544461-03:00","Action":"run","Package":"spike/multipkg/mathx","Test":"TestAddTable/zero"}
+{"Time":"2026-06-04T01:37:18.90454616-03:00","Action":"output","Package":"spike/multipkg/mathx","Test":"TestAddTable/zero","Output":"=== RUN   TestAddTable/zero\n"}
+{"Time":"2026-06-04T01:37:18.904548557-03:00","Action":"output","Package":"spike/multipkg/mathx","Test":"TestAddTable/zero","Output":"--- PASS: TestAddTable/zero (0.00s)\n"}
+{"Time":"2026-06-04T01:37:18.904550555-03:00","Action":"pass","Package":"spike/multipkg/mathx","Test":"TestAddTable/zero","Elapsed":0}
+{"Time":"2026-06-04T01:37:18.904552553-03:00","Action":"run","Package":"spike/multipkg/mathx","Test":"TestAddTable/neg"}
+{"Time":"2026-06-04T01:37:18.904556649-03:00","Action":"output","Package":"spike/multipkg/mathx","Test":"TestAddTable/neg","Output":"=== RUN   TestAddTable/neg\n"}
+{"Time":"2026-06-04T01:37:18.904558747-03:00","Action":"output","Package":"spike/multipkg/mathx","Test":"TestAddTable/neg","Output":"    mathx_test.go:27: Add(-2,-3) = -5, want -6\n"}
+{"Time":"2026-06-04T01:37:18.904562543-03:00","Action":"output","Package":"spike/multipkg/mathx","Test":"TestAddTable/neg","Output":"--- FAIL: TestAddTable/neg (0.00s)\n"}
+{"Time":"2026-06-04T01:37:18.904564641-03:00","Action":"fail","Package":"spike/multipkg/mathx","Test":"TestAddTable/neg","Elapsed":0}
+{"Time":"2026-06-04T01:37:18.904566839-03:00","Action":"output","Package":"spike/multipkg/mathx","Test":"TestAddTable","Output":"--- FAIL: TestAddTable (0.00s)\n"}
+{"Time":"2026-06-04T01:37:18.904568837-03:00","Action":"fail","Package":"spike/multipkg/mathx","Test":"TestAddTable","Elapsed":0}
+{"Time":"2026-06-04T01:37:18.904570835-03:00","Action":"run","Package":"spike/multipkg/mathx","Test":"TestMul"}
+{"Time":"2026-06-04T01:37:18.904572433-03:00","Action":"output","Package":"spike/multipkg/mathx","Test":"TestMul","Output":"=== RUN   TestMul\n"}
+{"Time":"2026-06-04T01:37:18.90457603-03:00","Action":"output","Package":"spike/multipkg/mathx","Test":"TestMul","Output":"    mathx_test.go:36: Mul(3,4) = 7, want 12\n"}
+{"Time":"2026-06-04T01:37:18.904578327-03:00","Action":"output","Package":"spike/multipkg/mathx","Test":"TestMul","Output":"--- FAIL: TestMul (0.00s)\n"}
+{"Time":"2026-06-04T01:37:18.904580225-03:00","Action":"fail","Package":"spike/multipkg/mathx","Test":"TestMul","Elapsed":0}
+{"Time":"2026-06-04T01:37:18.904582024-03:00","Action":"output","Package":"spike/multipkg/mathx","Output":"FAIL\n"}
+{"Time":"2026-06-04T01:37:18.904741763-03:00","Action":"run","Package":"spike/multipkg/strx","Test":"TestReverse"}
+{"Time":"2026-06-04T01:37:18.904750254-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverse","Output":"=== RUN   TestReverse\n"}
+{"Time":"2026-06-04T01:37:18.904765539-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverse","Output":"--- PASS: TestReverse (0.00s)\n"}
+{"Time":"2026-06-04T01:37:18.904772831-03:00","Action":"pass","Package":"spike/multipkg/strx","Test":"TestReverse","Elapsed":0}
+{"Time":"2026-06-04T01:37:18.90476454-03:00","Action":"output","Package":"spike/multipkg/mathx","Output":"FAIL\tspike/multipkg/mathx\t0.002s\n"}
+{"Time":"2026-06-04T01:37:18.904791113-03:00","Action":"fail","Package":"spike/multipkg/mathx","Elapsed":0.002}
+{"Time":"2026-06-04T01:37:18.904775629-03:00","Action":"run","Package":"spike/multipkg/strx","Test":"TestReverseTable"}
+{"Time":"2026-06-04T01:37:18.904850154-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverseTable","Output":"=== RUN   TestReverseTable\n"}
+{"Time":"2026-06-04T01:37:18.904858046-03:00","Action":"run","Package":"spike/multipkg/strx","Test":"TestReverseTable/abc"}
+{"Time":"2026-06-04T01:37:18.904860543-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverseTable/abc","Output":"=== RUN   TestReverseTable/abc\n"}
+{"Time":"2026-06-04T01:37:18.904865838-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverseTable/abc","Output":"--- PASS: TestReverseTable/abc (0.00s)\n"}
+{"Time":"2026-06-04T01:37:18.904868435-03:00","Action":"pass","Package":"spike/multipkg/strx","Test":"TestReverseTable/abc","Elapsed":0}
+{"Time":"2026-06-04T01:37:18.904870933-03:00","Action":"run","Package":"spike/multipkg/strx","Test":"TestReverseTable/#00"}
+{"Time":"2026-06-04T01:37:18.904872631-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverseTable/#00","Output":"=== RUN   TestReverseTable/#00\n"}
+{"Time":"2026-06-04T01:37:18.904875728-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverseTable/#00","Output":"--- PASS: TestReverseTable/#00 (0.00s)\n"}
+{"Time":"2026-06-04T01:37:18.904878425-03:00","Action":"pass","Package":"spike/multipkg/strx","Test":"TestReverseTable/#00","Elapsed":0}
+{"Time":"2026-06-04T01:37:18.904880423-03:00","Action":"run","Package":"spike/multipkg/strx","Test":"TestReverseTable/ab"}
+{"Time":"2026-06-04T01:37:18.904882221-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverseTable/ab","Output":"=== RUN   TestReverseTable/ab\n"}
+{"Time":"2026-06-04T01:37:18.904884519-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverseTable/ab","Output":"--- PASS: TestReverseTable/ab (0.00s)\n"}
+{"Time":"2026-06-04T01:37:18.904889414-03:00","Action":"pass","Package":"spike/multipkg/strx","Test":"TestReverseTable/ab","Elapsed":0}
+{"Time":"2026-06-04T01:37:18.904891712-03:00","Action":"run","Package":"spike/multipkg/strx","Test":"TestReverseTable/racecar"}
+{"Time":"2026-06-04T01:37:18.90489341-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverseTable/racecar","Output":"=== RUN   TestReverseTable/racecar\n"}
+{"Time":"2026-06-04T01:37:18.904895808-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverseTable/racecar","Output":"--- PASS: TestReverseTable/racecar (0.00s)\n"}
+{"Time":"2026-06-04T01:37:18.904897706-03:00","Action":"pass","Package":"spike/multipkg/strx","Test":"TestReverseTable/racecar","Elapsed":0}
+{"Time":"2026-06-04T01:37:18.904900003-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverseTable","Output":"--- PASS: TestReverseTable (0.00s)\n"}
+{"Time":"2026-06-04T01:37:18.904902201-03:00","Action":"pass","Package":"spike/multipkg/strx","Test":"TestReverseTable","Elapsed":0}
+{"Time":"2026-06-04T01:37:18.904904099-03:00","Action":"run","Package":"spike/multipkg/strx","Test":"TestReverseDeep"}
+{"Time":"2026-06-04T01:37:18.904905897-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverseDeep","Output":"=== RUN   TestReverseDeep\n"}
+{"Time":"2026-06-04T01:37:18.904912091-03:00","Action":"run","Package":"spike/multipkg/strx","Test":"TestReverseDeep/ascii"}
+{"Time":"2026-06-04T01:37:18.904914189-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverseDeep/ascii","Output":"=== RUN   TestReverseDeep/ascii\n"}
+{"Time":"2026-06-04T01:37:18.904916487-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverseDeep/ascii","Output":"--- PASS: TestReverseDeep/ascii (0.00s)\n"}
+{"Time":"2026-06-04T01:37:18.904920283-03:00","Action":"pass","Package":"spike/multipkg/strx","Test":"TestReverseDeep/ascii","Elapsed":0}
+{"Time":"2026-06-04T01:37:18.904922481-03:00","Action":"run","Package":"spike/multipkg/strx","Test":"TestReverseDeep/unicode"}
+{"Time":"2026-06-04T01:37:18.904924679-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverseDeep/unicode","Output":"=== RUN   TestReverseDeep/unicode\n"}
+{"Time":"2026-06-04T01:37:18.904926876-03:00","Action":"run","Package":"spike/multipkg/strx","Test":"TestReverseDeep/unicode/fails"}
+{"Time":"2026-06-04T01:37:18.904930073-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverseDeep/unicode/fails","Output":"=== RUN   TestReverseDeep/unicode/fails\n"}
+{"Time":"2026-06-04T01:37:18.904932271-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverseDeep/unicode/fails","Output":"    strx_test.go:36: Reverse(áé) = \"éá\", want aé (deliberately wrong)\n"}
+{"Time":"2026-06-04T01:37:18.904937665-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverseDeep/unicode/fails","Output":"--- FAIL: TestReverseDeep/unicode/fails (0.00s)\n"}
+{"Time":"2026-06-04T01:37:18.904940363-03:00","Action":"fail","Package":"spike/multipkg/strx","Test":"TestReverseDeep/unicode/fails","Elapsed":0}
+{"Time":"2026-06-04T01:37:18.90494266-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverseDeep/unicode","Output":"--- FAIL: TestReverseDeep/unicode (0.00s)\n"}
+{"Time":"2026-06-04T01:37:18.904944758-03:00","Action":"fail","Package":"spike/multipkg/strx","Test":"TestReverseDeep/unicode","Elapsed":0}
+{"Time":"2026-06-04T01:37:18.904946956-03:00","Action":"output","Package":"spike/multipkg/strx","Test":"TestReverseDeep","Output":"--- FAIL: TestReverseDeep (0.00s)\n"}
+{"Time":"2026-06-04T01:37:18.904949054-03:00","Action":"fail","Package":"spike/multipkg/strx","Test":"TestReverseDeep","Elapsed":0}
+{"Time":"2026-06-04T01:37:18.90495275-03:00","Action":"output","Package":"spike/multipkg/strx","Output":"FAIL\n"}
+{"Time":"2026-06-04T01:37:18.905323677-03:00","Action":"output","Package":"spike/multipkg/strx","Output":"FAIL\tspike/multipkg/strx\t0.002s\n"}
+{"Time":"2026-06-04T01:37:18.905355844-03:00","Action":"fail","Package":"spike/multipkg/strx","Elapsed":0.002}
+{"Time":"2026-06-04T01:37:18.906557734-03:00","Action":"output","Package":"spike/multipkg/initbroken","Output":"panic: initbroken: simulated package init failure\n"}
+{"Time":"2026-06-04T01:37:18.906612979-03:00","Action":"output","Package":"spike/multipkg/initbroken","Output":"\n"}
+{"Time":"2026-06-04T01:37:18.906621071-03:00","Action":"output","Package":"spike/multipkg/initbroken","Output":"goroutine 1 [running]:\n"}
+{"Time":"2026-06-04T01:37:18.906625366-03:00","Action":"output","Package":"spike/multipkg/initbroken","Output":"spike/multipkg/initbroken.init.0()\n"}
+{"Time":"2026-06-04T01:37:18.906631161-03:00","Action":"output","Package":"spike/multipkg/initbroken","Output":"\t/home/rodrigo/Workspace/no-bash-mcp/spikes/s1-schema/fixtures/go-multipkg/initbroken/initbroken.go:8 +0x25\n"}
+{"Time":"2026-06-04T01:37:18.906809781-03:00","Action":"output","Package":"spike/multipkg/initbroken","Output":"FAIL\tspike/multipkg/initbroken\t0.004s\n"}
+{"Time":"2026-06-04T01:37:18.90683995-03:00","Action":"fail","Package":"spike/multipkg/initbroken","Elapsed":0.004}

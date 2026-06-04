@@ -12,8 +12,9 @@
 >
 > **Scope of "decided" here.** The macro-architecture, the universal test-result schema (validated by
 > the prototype against three real reports), the package structure, the output contract, the build/
-> native posture, and the testing posture. **Field-level names** of the normalized schema stay
-> provisional until the universal-schema spike freezes them in a follow-up ADR (documentation-first).
+> native posture, and the testing posture. **Field-level names** of the normalized schema are now
+> **frozen in [ADR-0007](./docs/adr/0007-normalized-test-result-schema.md)** (accepted) by the
+> universal-schema spike — the §2 record graph below is the freeze of record.
 
 ---
 
@@ -121,6 +122,13 @@ primarily **server output** (serialized *to* the agent); the serde **deserializa
 bite only if/when these types are read back (e.g. a run-cache disk spill). The schema is designed to
 satisfy them regardless, so it is implementable-by-construction (detail:
 [`docs/research/testing-stack-research.md`](./docs/research/testing-stack-research.md) §8):
+
+> **Validation scope (spike s2 caveat).** These serde constraints are validated **on the JVM** (spike
+> `s1` folds the real `Finding` records). The **native** serialization of the *polymorphic* graph —
+> `@JsonTypeInfo`/`defaultImpl` discrimination + boxed-null emission for `sealed Finding` — was **not**
+> exercised under native-image (s2's native binary serialized only a flat `PingResult`). A `/tdd`+CI
+> native round-trip of a `List<Finding> = [TestFinding, ContainerFinding]` (serialize **and**
+> deserialize, since `defaultImpl`/`fail-on-null` bite on read-back) is owed before the native release.
 
 - **Polymorphism:** `sealed Finding` → `@JsonTypeInfo(use = NAME, property = "kind", defaultImpl = …)`.
   On output it gives the agent a stable shape to branch on (not a null `name`); `defaultImpl` keeps it
@@ -241,7 +249,13 @@ The prototype confirmed both ports stay **format-agnostic** — the second undec
   common envelope happens above it. Per-instance base URL + read-scoped token are adapter config,
   **never** arguments (forge-security-model.md). CI-check failures fold into the **same** `Finding`
   shape via `ContainerFinding(RUN, …)` — a CI check has no single test owner — so the envelope is
-  genuinely common across `run_tests` and `pr_checks`.
+  genuinely common across `run_tests` and `pr_checks` (spike s3 validated the *shape*; ADR-0007 rule 6
+  freezes the `conclusion → Outcome` mapping). **`ok()` completeness obligations the s3 spike did NOT
+  exercise (the target fit one page):** the adapter must **paginate** check-runs (`Link rel=next`), merge
+  the **Commit Statuses API** (`/commits/{ref}/status`), and treat `null`/`queued`/`in_progress` as
+  *incomplete, not ok* — else a failing check on page 2 or a red status false-greens the run
+  (forge-security-model.md area 3). Token-leak control on the job-log 302 and read-only *enforcement*
+  remain **test-owed**, not spike-proven.
 
 ---
 
@@ -288,10 +302,20 @@ Verified mechanics ([`docs/research/architecture-survey.md`](./docs/research/arc
   serializers, zero runtime reflection). **Do not** add `@SerdeImport`/reflect-config for MCP SDK
   envelope types unless a native build error proves a gap (the module handles their metadata).
 - **stdout hygiene is load-bearing (the #1 STDIO failure mode):** `micronaut.banner.enabled=false`
-  **and** `logback.xml`→`System.err` must ship **together** — a developer obligation, not automatic.
-  **To be verified empirically in the observability/G15 spike (§11)** — spike-gated, never reasoned to
-  a conclusion (operational-model.md): confirm the JVM *and* the native binary are stdout-clean by
-  piping an `initialize` frame. (The prototype did not exercise STDIO; it is plain Java records.)
+  **and** `logback.xml`→`System.err` must ship **together**. **VERIFIED empirically (spike s2, §11):**
+  stdout is pure JSON-RPC on **both the JVM and a GraalVM CE 25.0.2 native binary** — an `initialize`
+  frame yields only a JSON-RPC envelope on stdout; all logs land on stderr. The Micronaut Launch
+  `mcp-stdio` skeleton ships both changes by default.
+- **Native logback metadata is a MANDATORY tracing-agent capture (spike s2 finding — do not skip).** The
+  stdout-hygiene config itself breaks the native image: logback's joran XML configurator reflectively
+  calls `ch.qos.logback.core.ConsoleAppender.setTarget("System.err")`, which is **absent from the
+  GraalVM reachability-metadata repo** (`setTarget` count = 0 across all logback versions) — so the
+  native binary **crashes at startup** until the reflection is registered. Capture it with the
+  native-image **tracing agent** run over real STDIO frames (logback inits at startup, so it is captured)
+  and ship the generated `reachability-metadata.json` under `META-INF/native-image/dev.nobash/no-bash-mcp/`.
+  **Re-capture is required whenever `logback.xml` or the logback version changes**; the config the agent
+  traces must be the exact production config. The CI native stdout-clean gate (§9) — which must actually
+  **start** the binary — turns a metadata miss into a release-gate failure, not a silent production ship.
 - **Forge HTTP client = `micronaut-http-client-jdk`** — Micronaut `@Client` ergonomics over the JDK
   `java.net.http.HttpClient`, **Netty-free**. A minimal `micronaut-mcp-server-java-sdk` STDIO server
   is Netty-free; keeping it so **eliminates the `-H:+SharedArenaSupport` native-image concern** and
@@ -375,22 +399,39 @@ primary-source verified). **Inherit BOM-managed versions; pin only the two unman
 
 ---
 
-## 11. Open items (handed to the spikes / a later ADR — not blockers)
+## 11. Spike outcomes & residual open items
 
-- **Universal-schema spike** — re-run the fold on broader real repos; freeze field-level names in a
-  follow-up ADR; confirm the Go parent/child dedup heuristic on a multi-package repo; **add a
-  container-only run as an explicit test case** (a run whose only failure is a `ContainerFinding` must
-  not false-green — see §2 counting rule); decide whether retry/flaky (axis 8) is modeled in v1
-  (currently deferred).
-- **Go stdout-source parsing** — validate `go test -json` parsed from real `ExecResult.stdout` when a
-  **build/compile failure interleaves non-JSON output** with the JSON-lines (the prototype's fixture
-  used a runtime `init()` panic, which emits clean JSON events — the compile-error path is un-de-risked).
-- **Micronaut MCP STDIO spike** — register a trivial tool; confirm STDIO end-to-end **and** that the
-  default logger routes off stdout (G15, empirical) — the stdout-hygiene claim in §7 is owed here.
-- **Forge read-only spike** — GitHub CI check status + a failed-job log via `handle` + a PR view/diff,
-  against `github.com` **and** a GHES-style configurable base URL.
-- **pom-wiring decisions** — JUnit 6.0.3 vs 6.1.0; the `native:test` subset for CI; coverage tool
-  (JaCoCo on Java 25/GraalVM); final base package / groupId.
+The three de-risking spikes ran ([`spikes/`](./spikes/)); their durable verdicts and captured runs are
+committed. Outcomes:
+
+- **Universal-schema spike — DONE** ([`spikes/s1-schema/NOTES.md`](./spikes/s1-schema/NOTES.md)).
+  Falsified against unseen reports (Go multi-package dedup at scale; JUnit `@Nested`+parametrized; the
+  container-only G5 guard). Field names + normalization rules **frozen in
+  [ADR-0007](./docs/adr/0007-normalized-test-result-schema.md)** (accepted). retry/flaky stays deferred.
+- **Go stdout-source parsing — CLOSED (refuted for Go 1.26).** A compile failure does **not** interleave
+  non-JSON on stdout — `go test -json` emits JSON `build-output`/`build-fail` events. A real signal-loss
+  gap (the events are keyed by `ImportPath`, not `Package`) was found and remedied; frozen as ADR-0007
+  rule 4 (`build-fail` → `ERRORED`, compiler message + `file:line` preserved).
+- **Micronaut MCP STDIO spike — DONE** ([`spikes/s2-mcp-stdio/NOTES.md`](./spikes/s2-mcp-stdio/NOTES.md)).
+  STDIO works end-to-end and stdout is pure JSON-RPC on **both the JVM and a real GraalVM CE 25.0.2 native
+  binary** (startup ~11 ms). **Native blockers found (now §7/§8 obligations):** the link needs
+  `zlib1g-dev` (§A.1); the binary crashes at startup on the logback `<target>System.err</target>`
+  reflection until tracing-agent metadata is shipped; the mandated `--static-nolibc` form was not built
+  (a CI obligation). The schema's *native* polymorphic-serde path is JVM-validated only (ADR-0007 Scope).
+- **Forge read-only spike — DONE (mechanisms only)**
+  ([`spikes/s3-forge/NOTES.md`](./spikes/s3-forge/NOTES.md)). The by-reference token, the GHES `/api/v3`
+  URL seam, the common `ContainerFinding(RUN)` envelope shape, and the `get_log` drill-down hold. **Not
+  proven (test-owed, see §5 + forge-security-model.md):** read-only *enforcement* (spike used a
+  write-capable token), the 302 leak *control* (tautological assertion), `pr_checks` `ok()` completeness
+  (pagination + Commit Statuses), and all live GHES operational seams.
+
+**Residual open items (carry into `/tdd`):**
+- **Node/jest normalization rules** — owed (framework detection + jest/vitest/mocha JSON variance), per
+  ADR-0007; field names are jest-validated by the prototype.
+- **pom-wiring decisions** — JUnit 6.0.3 vs 6.1.0; the `native:test` subset for CI; coverage tool (JaCoCo
+  on Java 25/GraalVM); final base package / groupId.
+- **Native release form** — build + assert the `--static-nolibc` stdout-clean binary in the CI release
+  gate (with `zlib1g-dev` installed and the logback metadata shipped).
 
 ---
 

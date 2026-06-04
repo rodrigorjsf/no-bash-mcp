@@ -1,0 +1,7 @@
+{"ImportPath":"spike/compileerror/buggy [spike/compileerror/buggy.test]","Action":"build-output","Output":"# spike/compileerror/buggy [spike/compileerror/buggy.test]\n"}
+{"ImportPath":"spike/compileerror/buggy [spike/compileerror/buggy.test]","Action":"build-output","Output":"buggy/buggy_test.go:9:5: undefined: Heigth\n"}
+{"ImportPath":"spike/compileerror/buggy [spike/compileerror/buggy.test]","Action":"build-output","Output":"buggy/buggy_test.go:10:22: undefined: undeclaredVar\n"}
+{"ImportPath":"spike/compileerror/buggy [spike/compileerror/buggy.test]","Action":"build-fail"}
+{"Time":"2026-06-04T01:37:19.045207764-03:00","Action":"start","Package":"spike/compileerror/buggy"}
+{"Time":"2026-06-04T01:37:19.045255514-03:00","Action":"output","Package":"spike/compileerror/buggy","Output":"FAIL\tspike/compileerror/buggy [build failed]\n"}
+{"Time":"2026-06-04T01:37:19.045265004-03:00","Action":"fail","Package":"spike/compileerror/buggy","Elapsed":0,"FailedBuild":"spike/compileerror/buggy [spike/compileerror/buggy.test]"}

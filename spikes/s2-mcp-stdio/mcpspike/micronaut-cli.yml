@@ -1,0 +1,6 @@
+applicationType: default
+defaultPackage: dev.nobash
+testFramework: junit
+sourceLanguage: java
+buildTool: maven
+features: [app-name, http-client-test, java, java-application, json-schema, junit, logback, maven, maven-enforcer-plugin, mcp-stdio, micronaut-aot, micronaut-configuration-validation-gradle-plugin, micronaut-http-validation, micronaut-processing-compiler-args, properties, readme, serialization-jackson, shade, static-resources, validation]

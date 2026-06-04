@@ -1,0 +1,4 @@
+# Throwaway spike build artifacts — keep sources, fixtures, and captured reports.
+target/
+fixtures/*/target/
+**/*.class

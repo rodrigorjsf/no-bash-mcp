@@ -1,0 +1,37 @@
+  [PASS] token resolved BY REFERENCE from $GITHUB_TOKEN (never inline)
+  token present, length=40 (value never printed/logged/returned)
+
+=== URL construction seam — SaaS vs GHES (the self-hosted de-risk, ON PAPER) ===
+  SaaS REST : https://api.github.com/repos/cli/cli/pulls/13412
+  GHES REST : https://ghe.example.com/api/v3/repos/cli/cli/pulls/13412
+  SaaS GQL  : https://api.github.com/graphql
+  GHES GQL  : https://ghe.example.com/api/graphql
+  [PASS] GHES REST seam builds the /api/v3 prefix (not just a host swap)
+  [PASS] SaaS REST has NO /api/v3 prefix
+  [PASS] GHES GraphQL is /api/graphql (SaaS is /graphql under api.github.com)
+
+=== pr_view (#13412) — GET, JSON, normalize ===
+  PR #13412  state=closed merged=true  title=Rename Editable.Allowed to Selectable  +241.0/-17.0  files=13.0
+  [PASS] pr_view: PR is closed+merged (real data folded)
+
+=== pr_diff (#13412) — same endpoint, Accept: diff media type ===
+  diff bytes=14779  files touched (diff --git)=13
+  first diff line: diff --git a/acceptance/acceptance_test.go b/acceptance/acceptance_test.go
+  [PASS] pr_diff: Accept media type yields a unified diff (not JSON)
+
+=== pr_checks (ref 2503dcfd) — fold CI checks into the COMMON envelope ===
+  envelope: { ok=false, verb=pr_checks, manager=null, total_checks=8, failures=1 }
+    CONT [RUN] govulncheck  rawStatus=failure  handle=79422952257
+  [PASS] pr_checks: ok() is FALSE because a CI check failed (ContainerFinding(RUN), manager=null)
+  [PASS] pr_checks: exactly 1 failing check folded (govulncheck)
+  [PASS] pr_checks: a drill-down handle (job id) was resolved from the check
+
+=== get_log(handle=79422952257) — drill-down WITHOUT re-running; 302 sans token-leak ===
+  [PASS] get_log: 302 redirects to a DIFFERENT (signed blob) host
+  [PASS] get_log: signed-blob fetch succeeds WITHOUT forwarding the token
+  [PASS] get_log: NO Authorization header on the signed-blob request (no token leak)
+  job-log bytes=32611 lines=399
+  log signal line: 2026-06-04T00:17:52.6960321Z Complete job name: govulncheck
+  [PASS] get_log: failed-job log retrieved via handle (non-empty slice)
+
+ALL HARD ASSERTIONS PASSED

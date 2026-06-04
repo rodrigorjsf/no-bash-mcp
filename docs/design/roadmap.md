@@ -26,8 +26,8 @@
 - **Safe Unix utilities surface** (the parked scope-root choice) — only where it adds value beyond
   native Read/Grep/Glob, implemented **Java-native** for cross-platform (no shelling to
   `grep`/`find`, which Windows lacks).
-- **More ecosystems**: Python (pytest / poetry / uv), **Go** (`go test -json` — already appears in
-  local evidence), Rust (cargo), .NET.
+- **More ecosystems**: Python (pytest / poetry / uv), Rust (cargo), .NET. (Go is **v1**, not a future
+  evolution — decision-log D7 / tool-catalog.md.)
 - **Custom task-runner awareness**: moon, nx, turbo, make — evidence shows these are the top
   producers, so first-class detection/dispatch is high value.
 - **Affected-test selection** (git-diff-driven).
