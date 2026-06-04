@@ -26,6 +26,7 @@ was dropped (it is irrelevant to the normalizer). No `<testcase>` content was ha
 | --- | --- | --- |
 | `surefire-all-passed.xml` | the two passing rows of `surefire-normal-error-failure-skipped.xml` (`addPasses`, `evenNumbers(int)[1]`) | An all-PASSED run with `executedTests > 0`. Backs AC1 (counts-only `ok=true`), AC4 (non-zero exit + all-PASSED → `ok=false`, the D28 exit floor), and AC10 (the MCP-injected reportsDirectory). |
 | `surefire-all-skipped.xml` | the `<skipped>` row of `surefire-normal-error-failure-skipped.xml` (`skipped`) | An all-`SKIPPED` run: `executedTests == passed+failed+errored == 0` though a fresh report exists. Backs AC6 (`NO_TESTS_RUN`, the D29 positive-evidence floor — an all-`SKIPPED` run must not vacuously green). |
+| `surefire-timeout-fresh-passed-partials.xml` | a byte-for-byte copy of `surefire-all-passed.xml` (itself the two passing rows of the real `NormalTests` run) | A timeout that fired MID-RUN after some tests already passed: a fresh report holds PASSED partials yet the run was killed. Backs issue #6 fixture (f) — `timedOut=true` floors `ok=false` and yields a `TIMEOUT` envelope even though the only report rows are green (the partial-PASSED-on-timeout anti-false-green case). |
 
 ## The one hand-built artifact (labelled, carried from ADR-0007)
 

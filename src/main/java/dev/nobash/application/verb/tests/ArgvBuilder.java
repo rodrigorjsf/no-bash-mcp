@@ -44,12 +44,14 @@ public class ArgvBuilder {
      * @param vettedFlags     flags already filtered through the allowlist (never raw agent input)
      * @param freshReportsDir the unique, empty-before-exec reports directory (MCP-controlled)
      * @param workingDir      the module directory the manager runs in
+     * @param timeoutSeconds  the already-clamped hard deadline the executor enforces (issue #6)
      * @return the {@link ExecSpec} to hand to the executor seam
      */
-    public ExecSpec buildTestArgv(List<String> vettedFlags, String freshReportsDir, String workingDir) {
+    public ExecSpec buildTestArgv(List<String> vettedFlags, String freshReportsDir, String workingDir,
+                                  int timeoutSeconds) {
         List<String> argv = baseArgv(vettedFlags);
         argv.add(REPORTS_DIR_FLAG + freshReportsDir);
-        return new ExecSpec(argv, workingDir);
+        return new ExecSpec(argv, workingDir, timeoutSeconds);
     }
 
     private static List<String> baseArgv(List<String> vettedFlags) {

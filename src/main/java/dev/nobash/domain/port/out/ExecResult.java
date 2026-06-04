@@ -6,15 +6,16 @@ package dev.nobash.domain.port.out;
  * outcome. The verb use-case is what reads a report directory and normalizes; the seam stays
  * a thin, generic process boundary so {@code build}/{@code install}/{@code lint} reuse it.
  *
- * <p>{@code timedOut} is <strong>defined and read</strong> by this slice but always
- * {@code false} from the real executor — timeout enforcement (and the {@code TIMEOUT} code) is
- * a later slice (issue #6). The envelope's exit-code/timeout failure floor (D28) reads it now
- * so the wiring is in place before enforcement lands.</p>
+ * <p>{@code timedOut} is set {@code true} by the executor when it killed the process tree for
+ * exceeding the {@code ExecSpec.timeoutSeconds} deadline (issue #6). On a timeout the
+ * {@code stdout}/{@code stderr} carry whatever partial output drained before the tree was reaped;
+ * the verb use-case maps {@code timedOut} to a {@code TIMEOUT} operational-error envelope and the
+ * application failure floor (D28) also floors {@code ok} to false on it.</p>
  *
- * @param exitCode the process exit status ({@code 0} on success)
- * @param stdout   the full captured standard output
- * @param stderr   the full captured standard error
- * @param timedOut whether the run was killed for exceeding a deadline (always false this slice)
+ * @param exitCode the process exit status ({@code 0} on success; undefined on a timeout kill)
+ * @param stdout   the full captured standard output (partial on a timeout)
+ * @param stderr   the full captured standard error (partial on a timeout)
+ * @param timedOut whether the run was killed for exceeding its deadline (tree-killed)
  */
 public record ExecResult(int exitCode, String stdout, String stderr, boolean timedOut) {
 }

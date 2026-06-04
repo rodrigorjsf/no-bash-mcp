@@ -11,6 +11,7 @@ import dev.nobash.domain.port.out.ExecResult;
 import dev.nobash.domain.port.out.ExecSpec;
 import dev.nobash.domain.result.NormalizedRun;
 import dev.nobash.domain.result.SurefireNormalizer;
+import dev.nobash.infra.concurrency.ModuleLock;
 import jakarta.inject.Singleton;
 
 import java.io.IOException;
@@ -64,20 +65,23 @@ public class RunTestsUseCase {
     private final ArgvBuilder argvBuilder;
     private final TestsFlagPolicy flagPolicy;
     private final RawOutputStash stash;
+    private final ModuleLock moduleLock;
     private final SurefireNormalizer normalizer = new SurefireNormalizer();
 
     public RunTestsUseCase(CommandExecutorPort executor, ArgvBuilder argvBuilder,
-                           TestsFlagPolicy flagPolicy, RawOutputStash stash) {
+                           TestsFlagPolicy flagPolicy, RawOutputStash stash, ModuleLock moduleLock) {
         this.executor = executor;
         this.argvBuilder = argvBuilder;
         this.flagPolicy = flagPolicy;
         this.stash = stash;
+        this.moduleLock = moduleLock;
     }
 
     /**
      * @param path    the project directory (optional at the wire; null fails closed)
      * @param flags   agent-supplied flags (untrusted; vetted by the allowlist)
-     * @param timeout accepted but NOT enforced in this slice (enforcement is issue #6)
+     * @param timeout the agent's requested deadline in seconds; clamped (null/non-positive →
+     *                default, never beyond the cap) and enforced by the executor (issue #6)
      * @return the result envelope (success, test-failure, or operational-error)
      */
     public Envelope run(String path, List<String> flags, Integer timeout) {
@@ -118,14 +122,69 @@ public class RunTestsUseCase {
         // Preflight (DEPS_NOT_INSTALLED) is a Maven no-op (D21): deps resolve on demand from
         // ~/.m2 during the build, so there is nothing to check before exec. Pass through.
 
+        // Guard 4 — RESOURCE_BUSY. A mutating run holds a per-module lock keyed on the canonical
+        // realpath(moduleDir) (alias paths collapse to one key). A second same-module run while the
+        // first holds the lock fails fast — never blocks (ADR-0005, D22). A target selector does
+        // NOT change the key; different modules proceed concurrently. Acquired AFTER the three
+        // guards so a busy module is reported only for an otherwise-runnable request.
+        boolean acquired;
+        try {
+            acquired = moduleLock.tryAcquire(dir);
+        } catch (IOException e) {
+            // The directory guard already passed; a realpath failure here is genuinely exceptional.
+            throw new UncheckedIOException("Failed to resolve the module's real path for locking", e);
+        }
+        if (!acquired) {
+            return Envelope.operationalError(VERB, ErrorCode.RESOURCE_BUSY,
+                    "Another " + VERB + " is already running on this module.",
+                    "Wait for the in-flight run to finish, then retry — concurrent same-module runs fail fast.");
+        }
+
+        // The lock is released on EVERY exit path (success, test-failure, TIMEOUT, REPORT_NOT_PRODUCED,
+        // NO_TESTS_RUN, and any thrown exception) by the finally below.
+        try {
+            return runLocked(dir, flags, timeout);
+        } finally {
+            try {
+                moduleLock.release(dir);
+            } catch (IOException e) {
+                throw new UncheckedIOException("Failed to release the module lock", e);
+            }
+        }
+    }
+
+    /**
+     * The locked execution body: build the spec (with the clamped timeout), launch the trusted
+     * manager, and assemble the result envelope. Runs only while this verb holds the module lock;
+     * the caller's {@code finally} releases the lock on every exit path.
+     */
+    private Envelope runLocked(Path dir, List<String> flags, Integer timeout) {
         // Allocate a unique, empty-before-exec reports directory so any XML in it is necessarily
         // from THIS run (report freshness by construction, D27). Argv vetting drops every agent
         // flag outside the allowlist; the reportsDirectory flag is then injected by the MCP.
         Path freshReportsDir = allocateFreshReportsDir();
         List<String> vetted = flagPolicy.filter(flags == null ? List.of() : flags);
-        ExecSpec spec = argvBuilder.buildTestArgv(vetted, freshReportsDir.toString(), dir.toString());
+        // Clamp the agent's requested timeout: null/non-positive → default, > cap → cap (the agent
+        // may raise it up to but not beyond the cap). The clamped value rides the ExecSpec.
+        int timeoutSeconds = TimeoutPolicy.clamp(timeout);
+        ExecSpec spec = argvBuilder.buildTestArgv(vetted, freshReportsDir.toString(), dir.toString(),
+                timeoutSeconds);
 
         ExecResult result = executor.execute(spec);
+
+        // Timeout intercept (issue #6) — BEFORE the empty-dir check: a timeout killed before any
+        // report is written leaves the dir empty and would otherwise mislabel as REPORT_NOT_PRODUCED.
+        // Surface TIMEOUT uniformly (empty-on-timeout and partial-on-timeout both), retaining any
+        // partial signal behind the handle (op-error shape, ADR-0007 — manager/summary/failures null).
+        if (result.timedOut()) {
+            String partial = (result.stdout() == null ? "" : result.stdout())
+                    + (result.stderr() == null ? "" : result.stderr());
+            Handle handle = stash.put(new RunRecord(partial, partialFindings(freshReportsDir)));
+            return Envelope.operationalError(VERB, ErrorCode.TIMEOUT,
+                    "The run exceeded its timeout and was killed (the process tree was reaped).",
+                    "Raise `timeout` (up to the cap) or narrow the test scope; partial output is behind the handle.",
+                    handle);
+        }
 
         // Empty fresh dir after exec ⇒ no Surefire report ⇒ compile failure (D25/D27).
         List<String> reportXmls = readReportXmls(freshReportsDir);
@@ -160,6 +219,19 @@ public class RunTestsUseCase {
             return Envelope.success(VERB, MANAGER, run.summary(), handle);
         }
         return Envelope.testFailure(VERB, MANAGER, run.summary(), run.findings(), handle);
+    }
+
+    /**
+     * Best-effort partial findings on a timeout: a Surefire run that wrote some report XML before
+     * the kill leaves fresh PASSED/FAILED rows in the dir. Normalizing them lets {@code get_log}
+     * drill into the partial signal. A timeout that wrote nothing yields an empty list.
+     */
+    private List<dev.nobash.domain.result.Finding> partialFindings(Path freshReportsDir) {
+        List<String> reportXmls = readReportXmls(freshReportsDir);
+        if (reportXmls.isEmpty()) {
+            return List.of();
+        }
+        return normalizer.normalizeAll(reportXmls).findings();
     }
 
     private static Path allocateFreshReportsDir() {

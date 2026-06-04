@@ -11,6 +11,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -135,8 +136,99 @@ class MavenCommandExecutorTest {
             assertThat(result.exitCode()).isEqualTo(7);
             assertThat(result.stdout()).contains("out line");
             assertThat(result.stderr()).contains("err line");
-            // timedOut is define-and-read only in this slice — the real executor hardcodes false.
+            // A run that exits within its deadline is never flagged timedOut.
             assertThat(result.timedOut()).isFalse();
+        }
+    }
+
+    @Nested
+    class timeout_kills_the_whole_process_tree {
+
+        private MavenCommandExecutor anyExecutor() {
+            return new MavenCommandExecutor(manager -> true);
+        }
+
+        @Test
+        void a_run_that_exceeds_its_timeout_returns_a_timed_out_result_and_does_not_hang(
+                @TempDir Path bin) throws Exception {
+            // A REAL spawn that never exits within the deadline. POSIX-only (the fixture is a
+            // /bin/sh hang); skipped on Windows exactly as the real-spawn smoke above.
+            assumeTrue(!System.getProperty("os.name", "").toLowerCase().contains("win"),
+                    "POSIX shell hang fixture — Windows uses a different shim path");
+            Path hang = bin.resolve("mvn");
+            // Print a line (so partial stdout is non-empty), then block forever — the deadline fires.
+            Files.writeString(hang, "#!/bin/sh\n"
+                    + "echo 'started, will hang'\n"
+                    + "sleep 3600\n");
+            hang.toFile().setExecutable(true);
+
+            ExecSpec spec = new ExecSpec(List.of(hang.toString()), bin.toString(), 1);
+
+            long start = System.nanoTime();
+            ExecResult result = anyExecutor().execute(spec);
+            long elapsedSeconds = (System.nanoTime() - start) / 1_000_000_000L;
+
+            assertThat(result.timedOut()).as("a hung run is flagged timedOut").isTrue();
+            // The MCP did NOT hang: it returned far inside the child's 3600s sleep.
+            assertThat(elapsedSeconds).as("execute() returned promptly after the 1s deadline").isLessThan(30);
+        }
+
+        @Test
+        void the_process_tree_is_reaped_proven_by_polling_the_grandchild_pid_to_not_alive(
+                @TempDir Path bin) throws Exception {
+            // The tree-kill proof (issue #6 AC5). A forking helper: the spawned "mvn" backgrounds a
+            // long `sleep` (the GRANDCHILD of the test JVM), prints that grandchild's PID, then
+            // blocks forever so the deadline fires. After the timeout kill, ProcessHandle.of(pid)
+            // must poll to isAlive()==false within a bounded wait (reaping is async on Linux/WSL2).
+            assumeTrue(!System.getProperty("os.name", "").toLowerCase().contains("win"),
+                    "POSIX fork/exec fixture — Windows process-tree semantics differ");
+            Path forker = bin.resolve("mvn");
+            // The grandchild (sleep) is backgrounded; its PID is printed on its own line; the parent
+            // then waits forever so the executor's deadline expires and tree-kill engages.
+            Files.writeString(forker, "#!/bin/sh\n"
+                    + "sleep 3600 &\n"
+                    + "GRANDCHILD=$!\n"
+                    + "echo \"GRANDCHILD_PID=$GRANDCHILD\"\n"
+                    + "wait\n");
+            forker.toFile().setExecutable(true);
+
+            ExecSpec spec = new ExecSpec(List.of(forker.toString()), bin.toString(), 1);
+
+            ExecResult result = anyExecutor().execute(spec);
+
+            assertThat(result.timedOut()).isTrue();
+            long grandchildPid = parseGrandchildPid(result.stdout());
+            assertThat(grandchildPid).as("the helper must have printed its grandchild PID").isPositive();
+
+            // Reaping is async — poll, NEVER assert isAlive() immediately. Bounded wait so a leak
+            // (the grandchild surviving the parent's death) fails the test rather than hanging it.
+            boolean reaped = pollUntilNotAlive(grandchildPid, 15_000);
+            assertThat(reaped)
+                    .as("the backgrounded grandchild (pid %s) must be reaped by the tree-kill", grandchildPid)
+                    .isTrue();
+        }
+
+        private static long parseGrandchildPid(String stdout) {
+            for (String line : stdout.split("\\R")) {
+                if (line.startsWith("GRANDCHILD_PID=")) {
+                    return Long.parseLong(line.substring("GRANDCHILD_PID=".length()).trim());
+                }
+            }
+            return -1;
+        }
+
+        /** Poll {@code ProcessHandle.of(pid).isAlive()} to false within the bounded budget. */
+        private static boolean pollUntilNotAlive(long pid, long budgetMillis) throws InterruptedException {
+            long deadline = System.currentTimeMillis() + budgetMillis;
+            while (System.currentTimeMillis() < deadline) {
+                Optional<ProcessHandle> handle = ProcessHandle.of(pid);
+                if (handle.isEmpty() || !handle.get().isAlive()) {
+                    return true;
+                }
+                Thread.sleep(50);
+            }
+            Optional<ProcessHandle> handle = ProcessHandle.of(pid);
+            return handle.isEmpty() || !handle.get().isAlive();
         }
     }
 }

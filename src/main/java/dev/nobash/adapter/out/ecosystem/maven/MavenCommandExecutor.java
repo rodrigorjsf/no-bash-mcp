@@ -10,10 +10,13 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * The Maven ecosystem adapter (outbound). Satisfies {@link CommandExecutorPort} for the JVM/
@@ -27,14 +30,29 @@ import java.util.concurrent.Future;
  * resolved on {@code PATH} by the OS — never a repo wrapper ({@code ./mvnw}), per ADR-0008. The
  * launcher stays outside the agent's control.</p>
  *
- * <p>{@code timedOut} is always {@code false} here — timeout enforcement is a later slice
- * (issue #6). stdout and stderr are drained concurrently (stdout on a worker, stderr on the
- * calling thread) so the classic pipe-buffer deadlock cannot occur on a chatty build.</p>
+ * <p>Timeout enforcement (issue #6): the calling thread does a BOUNDED
+ * {@code process.waitFor(spec.timeoutSeconds(), SECONDS)}. On expiry it snapshots the live
+ * descendants BEFORE killing the parent (once the parent dies its descendants reparent to init
+ * and {@code descendants()} no longer finds them — the classic tree-kill bug), {@code
+ * destroyForcibly()}-s the parent then every snapshotted descendant, drains whatever partial
+ * output the pipes EOF after the tree is reaped, and returns a {@code timedOut=true} result.</p>
+ *
+ * <p>Both stdout AND stderr are drained on worker threads (NOT one on the calling thread): a
+ * hung child that never EOFs would otherwise block a calling-thread drain forever and the
+ * timeout could never fire. Draining both off-thread keeps the bounded {@code waitFor} the only
+ * thing the calling thread blocks on, so the deadline is always honoured.</p>
  */
 @Singleton
 public class MavenCommandExecutor implements CommandExecutorPort {
 
     private static final String MANAGER = "mvn";
+
+    /**
+     * Bounded grace to collect the drained partial output AFTER the tree is killed. The pipes
+     * EOF once every fd-holder is reaped; this cap guarantees a stuck drain can never re-hang
+     * the executor past the deadline it just enforced.
+     */
+    private static final long DRAIN_GRACE_SECONDS = 5;
 
     private final ManagerPathResolver resolver;
 
@@ -50,16 +68,25 @@ public class MavenCommandExecutor implements CommandExecutorPort {
     @Override
     public ExecResult execute(ExecSpec spec) {
         ProcessBuilder pb = toProcessBuilder(spec);
-        ExecutorService pool = Executors.newSingleThreadExecutor();
+        // BOTH pipes drain on workers so the calling thread blocks ONLY on the bounded waitFor —
+        // a calling-thread drain on a hung child would never EOF and the timeout could not fire.
+        ExecutorService pool = Executors.newFixedThreadPool(2);
         try {
             Process process = pb.start();
-            // Drain stdout on a worker while stderr drains on this thread — both pipes are read
-            // continuously, so a large build output cannot block the child on a full buffer.
             Future<String> stdoutFuture = pool.submit(() -> drain(process.getInputStream()));
-            String stderr = drain(process.getErrorStream());
+            Future<String> stderrFuture = pool.submit(() -> drain(process.getErrorStream()));
+
+            boolean exited = process.waitFor(spec.timeoutSeconds(), TimeUnit.SECONDS);
+            if (!exited) {
+                // Deadline expired — kill the WHOLE tree and return the partial signal.
+                String partialStdout = killTreeAndDrain(process, stdoutFuture);
+                String partialStderr = drainQuietly(stderrFuture);
+                return new ExecResult(-1, partialStdout, partialStderr, true);
+            }
+
             String stdout = stdoutFuture.get();
-            int exitCode = process.waitFor();
-            // timedOut is define-and-read only this slice — enforcement is issue #6.
+            String stderr = stderrFuture.get();
+            int exitCode = process.exitValue();
             return new ExecResult(exitCode, stdout, stderr, false);
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to launch '" + MANAGER + "' command", e);
@@ -70,6 +97,38 @@ public class MavenCommandExecutor implements CommandExecutorPort {
             throw new IllegalStateException("Failed to capture the '" + MANAGER + "' command output", e.getCause());
         } finally {
             pool.shutdownNow();
+        }
+    }
+
+    /**
+     * Kill the process tree on a timeout and collect the stdout that drains once the tree is
+     * reaped. Snapshots the descendants BEFORE destroying the parent (a dead parent's children
+     * reparent to init and are no longer enumerable), then forcibly destroys the parent and every
+     * snapshotted descendant. A grandchild holding an inherited stdout fd keeps the pipe open
+     * until it too is killed, so the drain is collected AFTER the kill, under a bounded grace.
+     */
+    private static String killTreeAndDrain(Process process, Future<String> stdoutFuture) {
+        List<ProcessHandle> descendants = process.descendants().toList();
+        process.destroyForcibly();
+        for (ProcessHandle child : descendants) {
+            child.destroyForcibly();
+        }
+        return drainQuietly(stdoutFuture);
+    }
+
+    /**
+     * Collect a drain future's captured output under a bounded grace, never re-hanging past the
+     * deadline. A timed-out or interrupted drain yields {@code ""} (the partial output is
+     * best-effort on a kill path).
+     */
+    private static String drainQuietly(Future<String> future) {
+        try {
+            return future.get(DRAIN_GRACE_SECONDS, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "";
+        } catch (ExecutionException | TimeoutException e) {
+            return "";
         }
     }
 

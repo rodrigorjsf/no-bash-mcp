@@ -94,6 +94,25 @@ class RunTestsExecutionTest {
         });
     }
 
+    /**
+     * Stub execute() to model a TIMEOUT mid-run: it writes the given fixture(s) into the injected
+     * dir (the fresh partials a real Surefire run would have written before the kill) AND returns
+     * a {@code timedOut=true} ExecResult, exactly as the real executor does after a tree-kill.
+     */
+    private void stubExecTimedOut(String partialStdout, String... fixtureResources) {
+        Mockito.when(executor.execute(Mockito.any())).thenAnswer((Answer<ExecResult>) inv -> {
+            ExecSpec spec = inv.getArgument(0);
+            capturedSpec.set(spec);
+            Path dir = injectedReportsDir(spec);
+            Files.createDirectories(dir);
+            int i = 0;
+            for (String resource : fixtureResources) {
+                Files.write(dir.resolve("TEST-fixture-" + (i++) + ".xml"), readBytes(resource));
+            }
+            return new ExecResult(-1, partialStdout, "", true);
+        });
+    }
+
     private Path mavenProject(Path dir) throws Exception {
         Files.writeString(dir.resolve("pom.xml"), "<project/>");
         return dir;
@@ -288,6 +307,77 @@ class RunTestsExecutionTest {
         assertThat(reportDirTokens).hasSize(1);
         assertThat(reportDirTokens.get(0)).doesNotContain("/tmp/agent-controlled");
         assertThat(spec.argv()).doesNotContain("-DskipTests");
+    }
+
+    // ---- issue #6 fixture (f) — timeout mid-run leaving fresh PASSED partials → TIMEOUT, ok=false ----
+    @Test
+    void timeout_mid_run_with_fresh_passed_partials_is_a_TIMEOUT_envelope_with_ok_false(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        // A real Surefire run wrote PASSED rows before the deadline fired and the tree was killed.
+        stubExecTimedOut("partial out before the kill\n",
+                "fixtures/maven/surefire-timeout-fresh-passed-partials.xml");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+        // The DISCRIMINATING assertions (not ok=false alone — the floor already nulls ok on
+        // timedOut, so ok=false would pass even without the TIMEOUT branch): it is a TIMEOUT
+        // OPERATIONAL error, never a vacuous-green success, even though the only report rows passed.
+        assertThat(env.ok()).as("a timeout floors ok to false even with all-passed partials").isFalse();
+        assertThat(env.error()).as("a timeout is an operational error, not a test-failure envelope").isNotNull();
+        assertThat(env.error().code()).isEqualTo(ErrorCode.TIMEOUT);
+        // The partial signal is retained behind the handle (op-error shape — manager/summary/failures null).
+        assertThat(env.handle()).as("the partial signal is behind the handle").isNotNull();
+        assertThat(env.summary()).isNull();
+        assertThat(env.failures()).isNull();
+        assertThat(stash.get(env.handle())).contains("partial out before the kill");
+    }
+
+    // ---- issue #6 — a timeout that wrote NO report still reports TIMEOUT (not REPORT_NOT_PRODUCED) ----
+    @Test
+    void timeout_with_an_empty_reports_dir_is_TIMEOUT_not_REPORT_NOT_PRODUCED(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        // The deadline fired before any Surefire report was written — the dir stays empty.
+        stubExecTimedOut("killed before any report\n");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+        // The timeout intercept runs BEFORE the empty-dir check, so an empty-on-timeout run is
+        // TIMEOUT, never mislabelled REPORT_NOT_PRODUCED (a compile failure).
+        assertThat(env.error()).isNotNull();
+        assertThat(env.error().code()).isEqualTo(ErrorCode.TIMEOUT);
+    }
+
+    // ---- issue #6 — the agent's timeout is clamped onto the ExecSpec (default / cap) ----
+    @Test
+    void an_unspecified_timeout_defaults_onto_the_exec_spec(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(0, "", "fixtures/maven/surefire-all-passed.xml");
+
+        useCase.run(dir.toString(), List.of(), null);
+
+        assertThat(capturedSpec.get().timeoutSeconds()).isEqualTo(TimeoutPolicy.DEFAULT_SECONDS);
+    }
+
+    @Test
+    void an_over_cap_timeout_is_clamped_to_the_cap_on_the_exec_spec(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(0, "", "fixtures/maven/surefire-all-passed.xml");
+
+        useCase.run(dir.toString(), List.of(), TimeoutPolicy.MAX_SECONDS + 5_000);
+
+        assertThat(capturedSpec.get().timeoutSeconds())
+                .as("the agent may raise the timeout only up to the cap, never beyond")
+                .isEqualTo(TimeoutPolicy.MAX_SECONDS);
+    }
+
+    @Test
+    void an_in_range_timeout_is_passed_through_onto_the_exec_spec(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(0, "", "fixtures/maven/surefire-all-passed.xml");
+
+        useCase.run(dir.toString(), List.of(), TimeoutPolicy.DEFAULT_SECONDS + 1);
+
+        assertThat(capturedSpec.get().timeoutSeconds()).isEqualTo(TimeoutPolicy.DEFAULT_SECONDS + 1);
     }
 
     private static byte[] readBytes(String resource) {
