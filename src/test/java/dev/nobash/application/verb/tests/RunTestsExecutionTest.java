@@ -225,6 +225,51 @@ class RunTestsExecutionTest {
         assertThat(env.failures()).singleElement().isInstanceOf(ContainerFinding.class);
     }
 
+    // ---- AC (issue #5) — every post-exec envelope carries a non-null Handle ----
+
+    @Test
+    void all_passing_run_envelope_carries_a_non_null_handle(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(0, "", "fixtures/maven/surefire-all-passed.xml");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+        assertThat(env.ok()).isTrue();
+        assertThat(env.handle()).as("a successful run must carry a Handle for get_log").isNotNull();
+        assertThat(env.handle().id()).as("the handle id must be non-blank").isNotBlank();
+    }
+
+    @Test
+    void failing_run_envelope_carries_a_non_null_handle(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(1, "", "fixtures/maven/surefire-normal-error-failure-skipped.xml");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+        assertThat(env.ok()).isFalse();
+        assertThat(env.failures()).isNotEmpty();
+        assertThat(env.handle()).as("a test-failure run must carry a Handle for get_log").isNotNull();
+        assertThat(env.handle().id()).as("the handle id must be non-blank").isNotBlank();
+    }
+
+    @Test
+    void handle_from_failing_run_can_drill_into_failing_test_detail(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(1, "", "fixtures/maven/surefire-normal-error-failure-skipped.xml");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+        // The handle must be usable for get_log without re-running: the stashed record holds the
+        // failing test's full detail, retrievable by identity (no re-execution).
+        assertThat(env.handle()).isNotNull();
+        assertThat(stash.getRecord(env.handle())).isNotNull();
+        String detail = stash.getRecord(env.handle()).findings().stream()
+                .filter(f -> f instanceof TestFinding tf && tf.name().equals("addFailsAssertion"))
+                .map(Finding::detail)
+                .findFirst().orElse(null);
+        assertThat(detail).as("the failing test's detail is retained behind the handle").isNotNull();
+    }
+
     // ---- AC10 — the reportsDirectory token is MCP-injected and an agent flag cannot supply it ----
     @Test
     void the_reports_directory_is_mcp_injected_and_not_droppable_agent_input(@TempDir Path dir) throws Exception {
