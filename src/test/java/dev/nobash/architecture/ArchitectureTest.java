@@ -70,6 +70,25 @@ class ArchitectureTest {
     }
 
     @Test
+    void the_result_domain_is_io_free() {
+        // AC7 (issue #3) — the pure Surefire normalizer must do NO directory read, NO file
+        // read, and launch NO process; report content arrives already in memory. ArchUnit's
+        // layer rules do not catch java.io.File / java.nio.file / Process leaking into the
+        // domain, so this rule makes I/O-freedom VERIFIABLE rather than self-asserted. The
+        // normalizer parses via ByteArrayInputStream (javax.xml.parsers + org.w3c.dom), which
+        // this rule permits; File/Path/Files/Process/ProcessBuilder are forbidden.
+        ArchRule rule = noClasses()
+                .that().resideInAPackage(BASE + ".domain.result..")
+                .should().dependOnClassesThat().resideInAnyPackage("java.nio.file..")
+                .orShould().dependOnClassesThat().haveFullyQualifiedName("java.io.File")
+                .orShould().dependOnClassesThat().haveFullyQualifiedName("java.lang.Process")
+                .orShould().dependOnClassesThat().haveFullyQualifiedName("java.lang.ProcessBuilder")
+                .allowEmptyShould(true);
+
+        rule.check(productionClasses);
+    }
+
+    @Test
     void the_layered_dependency_rule_holds() {
         // Only layers that have classes in THIS slice are declared (no empty infra/config
         // layers pre-declared). domain is the innermost; adapter the outermost.
