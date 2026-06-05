@@ -13,13 +13,13 @@ evidence. See gotcha **G11**.
 |---|---|---|
 | `describe_project(path?)` | Orientation in one call: detected modules, manager per module, available verbs, **valid flags, and custom tasks/scripts**. | Custom tasks (`pnpm sandcastle:*`, `moon run <proj>:test`, Makefile targets, Gradle tasks) are **first-class** — evidence shows these are the top producers, not the standard verbs. |
 | `run_tests(path?, target?, flags?, timeout?)` | Run tests; return normalized failures. | **Structured target selector** (class / file / method / module) → translated to `-Dtest=`, `--tests`, jest pattern, `-k`. Avoids full-suite re-runs (waste pattern P6). |
-| `build(path?, flags?, timeout?)` | Build / compile. | Compile errors parsed to `file:line` when a parser exists; else truncated-with-cap. |
+| `build(path?, flags?, timeout?)` | Build / compile. | Compile errors → `diagnostics[]` of `CompileDiagnostic{file, line, col, severity, message}`, parsed from the manager's structured compiler output (Maven `[ERROR] <file>:[<line>,<col>]`); full output via `handle`. A **build-specific** shape — **not** the test `failures[]`/`Finding` schema (a compile error has no test identity / `Outcome` / column). See [ADR-0009](../adr/0009-build-compile-diagnostic-output.md). Else truncated-with-cap. |
 | `install(path?, flags?)` | Install dependencies. | Project-sanctioned; runs lifecycle hooks (accepted by the guarantee). |
 | `lint(path?, flags?)` | Lint. | Structured findings (eslint `--format json`, checkstyle XML) when available. |
 | `run_task(name, path?)` | Run a **project-defined** task the user has **opted in**. | **Opt-in allowlist, fail-closed**: by default *no* custom task is runnable; the human allow-lists tasks in the non-agent-mutable project config. "Project-defined ≠ safe to auto-run" — real repos hold `deploy:prod`, `db:migrate:prod`, `release` (gotcha **G14**). The 4 core verbs stay always-available. **No** arbitrary extra args (gotcha **G10**). |
 | `dependencies(path?, mode)` | Query-oriented dependency info. | Modes: `direct`, `why <pkg>`, `resolve <pkg>`. Normalized single schema. **Never** dumps the full transitive tree. |
 | `get_log(handle, filter?)` | Drill-down into a retained run result. | Expands exactly the requested slice (one failure, a test's system-out, full stderr) **without re-running**. The anti-RTK keystone (gotcha **G5**). |
-| `git_status` / `git_diff` / `git_log` / `git_show` / `git_branch` (read-only) | Structured git inspection. | **Read-only only.** Ecosystem-agnostic (one cheap adapter). Highest-volume evidence category (773 calls). `git_diff` reuses `handle` + `get_log` for verbose output. Mutating git is post-v1. **Five discrete verbs, not a `git(mode)` tool** — see ADR-0001 (the convergence rule: git's modes diverge in both args and output). |
+| `git_status` / `git_diff` / `git_log` / `git_show` / `git_branch` (read-only) | Structured git inspection. | **Read-only only.** Ecosystem-agnostic (one cheap adapter). Highest-volume evidence category (773 calls). **Per-verb normalized shapes parsed from `--porcelain=v2` / `--format=`** (git's machine contract, locale-stable — the D8 "parse the machine format, never scrape stdout" rule applied to git); `git_log` returns a capped commit list with full body via `git_show`; large `git_diff`/`git_show` patches sit behind a `handle` + `get_log`. `manager` is null for git. Mutating git is post-v1. **Five discrete verbs, not a `git(mode)` tool** — see ADR-0001. See decision-log D34. |
 
 ## Forge inspection (v1: GitHub read-only)
 
@@ -47,6 +47,9 @@ by a separate security domain — see [`forge-security-model.md`](./forge-securi
 - **Success** → minimal payload (counts only; the report is not even read).
 - **Failure (test)** → normalized `failures[]` (class, test, message, `file:line`, project-side
   stack frames), with caps that truncate noise but never signal (pillar P4).
+- **Failure (build/compile)** → `diagnostics[]` of `CompileDiagnostic{file, line, col, severity,
+  message}` — a build-specific shape distinct from test `failures[]` ([ADR-0009](../adr/0009-build-compile-diagnostic-output.md));
+  full compiler output via `handle`.
 - **Failure (operational)** → enumerated `code` (`NO_MANAGER_DETECTED`, `TOOL_NOT_INSTALLED`,
   `DEPS_NOT_INSTALLED`, `REPORT_NOT_PRODUCED`, `TIMEOUT`, `INVALID_PATH`, `AMBIGUOUS_SCOPE`,
   `RESOURCE_BUSY`, …) +

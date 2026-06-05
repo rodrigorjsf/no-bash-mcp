@@ -269,9 +269,13 @@ already fully decided, so re-modeling them would have validated nothing).
 
 - **Common envelope** (`domain/envelope/`) for every verb: `{ ok, verb, manager?, summary, handle?, … }`.
   `manager` is present **only for ecosystem verbs** (Maven/Node/Go) and is **null/omitted for git and
-  forge verbs** — a forge is not a manager and git is ecosystem-agnostic (CONTEXT.md). Three shapes:
+  forge verbs** — a forge is not a manager and git is ecosystem-agnostic (CONTEXT.md). Four shapes:
   - **success** → minimal payload (counts only; the report is not even read);
   - **test-failure** → normalized `failures[]` (the §2 `Finding` list);
+  - **build-failure** → `diagnostics[]` of `CompileDiagnostic{file, line, col, severity, message}` — a
+    build-specific shape, **not** the §2 `Finding` graph (a compile error has no test identity /
+    `Outcome` / column); parsed from the manager's structured compiler output, full output via `handle`
+    ([ADR-0009](./docs/adr/0009-build-compile-diagnostic-output.md), decision-log D33);
   - **operational-error** → enumerated `code` (`NO_MANAGER_DETECTED`, `TOOL_NOT_INSTALLED`,
     `DEPS_NOT_INSTALLED`, `REPORT_NOT_PRODUCED`, `TIMEOUT`, `INVALID_PATH`, `AMBIGUOUS_SCOPE`,
     `RESOURCE_BUSY`, …) + `message` + actionable `hint`. Distinct from test failures so the agent

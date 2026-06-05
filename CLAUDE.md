@@ -35,8 +35,16 @@ contributor, human or agent. All durable artifacts are written in **English**.
 ## Source of truth
 
 - **What & why** of the product decisions → [`docs/design/`](./docs/design/).
-- **How** it is structured in code → `DESIGN.md` (forthcoming, from step 2).
+- **How** it is structured in code → `DESIGN.md`.
 - **Empirical grounding** → [`docs/research/`](./docs/research/).
+
+## Documentation conventions
+
+- **Diagram by default.** Whenever a document would be clearer with a structural, flow, sequence, or
+  state view, include a **Mermaid** diagram — not prose alone. Applies to `DESIGN.md`, ADRs,
+  `docs/design/`, READMEs, and handoffs, wherever a diagram is applicable.
+- **Mermaid styling & compatibility** (theme-neutral colors, animation rules, canonical skeletons):
+  see [`.claude/rules/diagrams.md`](./.claude/rules/diagrams.md) — auto-loads when editing `*.md`.
 
 ## Agent skills
 
