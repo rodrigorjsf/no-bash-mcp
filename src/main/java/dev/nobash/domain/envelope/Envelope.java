@@ -2,6 +2,8 @@ package dev.nobash.domain.envelope;
 
 import dev.nobash.domain.error.ErrorCode;
 import dev.nobash.domain.error.OperationalError;
+import dev.nobash.domain.git.GitCommit;
+import dev.nobash.domain.git.GitCommitDetail;
 import dev.nobash.domain.git.GitStatus;
 import dev.nobash.domain.git.GitStatusEntry;
 import dev.nobash.domain.result.BuildSummary;
@@ -61,11 +63,15 @@ import java.util.List;
  * @param buildSummary    the compile-level counts ({@code errors}/{@code warnings}); present on
  *                        build success and build compile-failure (ADR-0009)
  * @param gitStatus       the normalized git-status shape; present only on a git_status result (PRD-002)
+ * @param gitLog          the capped commit list; present only on a git_log result (PRD-002, issue #26)
+ * @param gitShow         the commit detail (metadata + body); present only on a git_show result
+ *                        (PRD-002, issue #26); the diff is behind the {@code handle}
  * @param error           the operational error when this is the op-error shape; null otherwise
  * @param handle          a token to retrieve stashed raw output later; null when nothing was stashed
  * @param untrusted       {@code true} when this envelope carries repo-derived content that has been
  *                        neutralized but is still untrusted data ({@code failures[]},
- *                        {@code diagnostics[]}, or {@code gitStatus})
+ *                        {@code diagnostics[]}, {@code gitStatus}, {@code gitLog},
+ *                        or {@code gitShow})
  */
 @Serdeable
 @Introspected
@@ -78,6 +84,8 @@ public record Envelope(boolean ok,
                        @Nullable List<CompileDiagnostic> diagnostics,
                        @Nullable BuildSummary buildSummary,
                        @Nullable GitStatus gitStatus,
+                       @Nullable List<GitCommit> gitLog,
+                       @Nullable GitCommitDetail gitShow,
                        @Nullable OperationalError error,
                        @Nullable Handle handle,
                        boolean untrusted) {
@@ -88,7 +96,7 @@ public record Envelope(boolean ok,
      * CONTEXT.md "Noise"). Server-authored content only; marked {@code untrusted=false}.
      */
     public static Envelope success(String verb, String manager, Summary summary, @Nullable Handle handle) {
-        return new Envelope(true, verb, manager, summary, null, null, null, null, null, handle, false);
+        return new Envelope(true, verb, manager, summary, null, null, null, null, null, null, null, handle, false);
     }
 
     /**
@@ -98,7 +106,7 @@ public record Envelope(boolean ok,
      */
     public static Envelope buildSuccess(String verb, String manager, BuildSummary buildSummary,
                                         @Nullable Handle handle) {
-        return new Envelope(true, verb, manager, null, null, null, buildSummary, null, null, handle, false);
+        return new Envelope(true, verb, manager, null, null, null, buildSummary, null, null, null, null, handle, false);
     }
 
     /**
@@ -114,7 +122,7 @@ public record Envelope(boolean ok,
                 .map(Envelope::neutralizeDiagnostic)
                 .toList();
         return new Envelope(false, verb, manager, null, null, List.copyOf(neutralized),
-                buildSummary, null, null, handle, true);
+                buildSummary, null, null, null, null, handle, true);
     }
 
     /**
@@ -134,7 +142,7 @@ public record Envelope(boolean ok,
         List<Finding> neutralized = failures.stream()
                 .map(Envelope::neutralizeFinding)
                 .toList();
-        return new Envelope(false, verb, manager, summary, List.copyOf(neutralized), null, null, null, null, handle, true);
+        return new Envelope(false, verb, manager, summary, List.copyOf(neutralized), null, null, null, null, null, null, handle, true);
     }
 
     /**
@@ -150,7 +158,44 @@ public record Envelope(boolean ok,
      */
     public static Envelope gitStatus(String verb, GitStatus status, @Nullable Handle handle) {
         return new Envelope(true, verb, null, null, null, null, null,
-                neutralizeGitStatus(status), null, handle, true);
+                neutralizeGitStatus(status), null, null, null, handle, true);
+    }
+
+    /**
+     * Build a git-log success envelope ({@code ok=true}) carrying the capped commit list (PRD-002,
+     * issue #26). {@code manager} is null — git verbs detect no package manager.
+     *
+     * <p><b>P9 neutralization:</b> author and subject are repo-derived and are P9-neutralized
+     * before storing. sha/abbrev/dateIso are git-generated and safe. The envelope is marked
+     * {@code untrusted=true}.</p>
+     *
+     * @param verb    the verb name ({@code "git_log"})
+     * @param commits the capped commit list to include in the envelope
+     * @return the git-log envelope
+     */
+    public static Envelope gitLog(String verb, List<GitCommit> commits) {
+        List<GitCommit> neutralized = commits.stream()
+                .map(Envelope::neutralizeGitCommit)
+                .toList();
+        return new Envelope(true, verb, null, null, null, null, null, null,
+                List.copyOf(neutralized), null, null, null, true);
+    }
+
+    /**
+     * Build a git-show success envelope ({@code ok=true}) carrying the commit detail (PRD-002,
+     * issue #26). The diff is stashed behind {@code handle} and retrievable via {@code get_log}.
+     *
+     * <p><b>P9 neutralization:</b> author, subject, and body are repo-derived and P9-neutralized.
+     * sha/abbrev/dateIso are git-generated and safe. The envelope is marked {@code untrusted=true}.</p>
+     *
+     * @param verb   the verb name ({@code "git_show"})
+     * @param detail the commit detail (metadata + body; diff is NOT embedded here)
+     * @param handle the handle pointing at the stashed diff raw output; may be null
+     * @return the git-show envelope
+     */
+    public static Envelope gitShow(String verb, GitCommitDetail detail, @Nullable Handle handle) {
+        return new Envelope(true, verb, null, null, null, null, null, null, null,
+                neutralizeGitCommitDetail(detail), null, handle, true);
     }
 
     /**
@@ -168,7 +213,7 @@ public record Envelope(boolean ok,
      */
     public static Envelope operationalError(String verb, ErrorCode code, String message, String hint,
                                             @Nullable Handle handle) {
-        return new Envelope(false, verb, null, null, null, null, null, null, new OperationalError(code, message, hint), handle, false);
+        return new Envelope(false, verb, null, null, null, null, null, null, null, null, new OperationalError(code, message, hint), handle, false);
     }
 
     // ---- P9 neutralization helpers ----
@@ -247,5 +292,28 @@ public record Envelope(boolean ok,
         String path     = OutboundNeutralizer.neutralize(entry.path(),     OutboundNeutralizer.SOURCE_FILE_CAP);
         String origPath = OutboundNeutralizer.neutralize(entry.origPath(), OutboundNeutralizer.SOURCE_FILE_CAP);
         return new GitStatusEntry(path, entry.code(), origPath);
+    }
+
+    /**
+     * Apply {@link OutboundNeutralizer} to the repo-derived fields of a {@link GitCommit}:
+     * {@code author} (MESSAGE_CAP) and {@code subject} (MESSAGE_CAP). The sha/abbrev/dateIso
+     * fields are git-generated and safe; they are not neutralized.
+     */
+    private static GitCommit neutralizeGitCommit(GitCommit commit) {
+        String author  = OutboundNeutralizer.neutralize(commit.author(),  OutboundNeutralizer.MESSAGE_CAP);
+        String subject = OutboundNeutralizer.neutralize(commit.subject(), OutboundNeutralizer.MESSAGE_CAP);
+        return new GitCommit(commit.sha(), commit.abbrev(), author, commit.dateIso(), subject);
+    }
+
+    /**
+     * Apply {@link OutboundNeutralizer} to the repo-derived fields of a {@link GitCommitDetail}:
+     * {@code author} (MESSAGE_CAP), {@code subject} (MESSAGE_CAP), and {@code body} (DETAIL_CAP).
+     * The sha/abbrev/dateIso fields are git-generated and safe; they are not neutralized.
+     */
+    private static GitCommitDetail neutralizeGitCommitDetail(GitCommitDetail detail) {
+        String author  = OutboundNeutralizer.neutralize(detail.author(),  OutboundNeutralizer.MESSAGE_CAP);
+        String subject = OutboundNeutralizer.neutralize(detail.subject(), OutboundNeutralizer.MESSAGE_CAP);
+        String body    = OutboundNeutralizer.neutralize(detail.body(),    OutboundNeutralizer.DETAIL_CAP);
+        return new GitCommitDetail(detail.sha(), detail.abbrev(), author, detail.dateIso(), subject, body);
     }
 }

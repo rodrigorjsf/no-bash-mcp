@@ -134,19 +134,104 @@ class GitInspectorAcceptanceIT {
                 .isEqualTo("NOT_A_GIT_REPOSITORY");
     }
 
+    // ---- AC: git_log on a repo with commits → ok=true, gitLog[] non-empty ----
+
+    @Test
+    void inspector_cli_git_log_on_a_repo_with_commits_returns_ok_true_with_non_empty_list(
+            @TempDir Path tmp) throws Exception {
+        GitRepoFixture repo = GitRepoFixture.init(tmp)
+                .writeFile("a.txt", "v1\n").add().commit("first commit")
+                .writeFile("b.txt", "v2\n").add().commit("second commit");
+
+        String envelopeJson = callToolViaInspector("git_log", "path=" + repo.dir().toString());
+
+        String okValue = jqExtract(envelopeJson, ".ok");
+        assertThat(okValue.strip()).as("git_log: ok must be true").isEqualTo("true");
+
+        String listLen = jqExtract(envelopeJson, ".gitLog | length");
+        assertThat(Integer.parseInt(listLen.strip()))
+                .as("git_log: gitLog[] must be non-empty")
+                .isGreaterThan(0);
+    }
+
+    @Test
+    void inspector_cli_git_log_with_limit_returns_at_most_that_many_commits(
+            @TempDir Path tmp) throws Exception {
+        GitRepoFixture repo = GitRepoFixture.init(tmp)
+                .writeFile("a.txt", "1\n").add().commit("c1")
+                .writeFile("b.txt", "2\n").add().commit("c2")
+                .writeFile("c.txt", "3\n").add().commit("c3");
+
+        String envelopeJson = callToolViaInspector("git_log",
+                "path=" + repo.dir().toString(), "limit=2");
+
+        String okValue = jqExtract(envelopeJson, ".ok");
+        assertThat(okValue.strip()).as("git_log limit: ok must be true").isEqualTo("true");
+
+        String listLen = jqExtract(envelopeJson, ".gitLog | length");
+        assertThat(Integer.parseInt(listLen.strip()))
+                .as("git_log limit: gitLog[] must have at most 2 entries")
+                .isLessThanOrEqualTo(2);
+    }
+
+    // ---- AC: git_show on HEAD → ok=true, gitShow.subject present, handle present ----
+
+    @Test
+    void inspector_cli_git_show_HEAD_returns_ok_true_with_subject_and_handle(
+            @TempDir Path tmp) throws Exception {
+        GitRepoFixture repo = GitRepoFixture.init(tmp)
+                .writeFile("file.txt", "content\n").add().commit("seed commit");
+
+        String envelopeJson = callToolViaInspector("git_show",
+                "path=" + repo.dir().toString(), "ref=HEAD");
+
+        String okValue = jqExtract(envelopeJson, ".ok");
+        assertThat(okValue.strip()).as("git_show HEAD: ok must be true").isEqualTo("true");
+
+        String subject = jqExtract(envelopeJson, ".gitShow.subject");
+        assertThat(subject.strip())
+                .as("git_show HEAD: subject must be present")
+                .isEqualTo("seed commit");
+
+        String handleId = jqExtract(envelopeJson, ".handle.id");
+        assertThat(handleId.strip())
+                .as("git_show HEAD: handle.id must be present")
+                .isNotBlank();
+    }
+
+    @Test
+    void inspector_cli_git_show_unknown_ref_returns_COMMIT_NOT_FOUND(
+            @TempDir Path tmp) throws Exception {
+        GitRepoFixture repo = GitRepoFixture.init(tmp)
+                .writeFile("f.txt", "x\n").add().commit("seed");
+
+        String envelopeJson = callToolViaInspector("git_show",
+                "path=" + repo.dir().toString(), "ref=nonexistent-sha-deadbeef");
+
+        String okValue = jqExtract(envelopeJson, ".ok");
+        assertThat(okValue.strip()).as("git_show bad ref: ok must be false").isEqualTo("false");
+
+        String errorCode = jqExtract(envelopeJson, ".error.code");
+        assertThat(errorCode.strip())
+                .as("git_show bad ref: error.code must be COMMIT_NOT_FOUND")
+                .isEqualTo("COMMIT_NOT_FOUND");
+    }
+
     // ---- helpers ----
 
-    private static String callGitStatusViaInspector(String repoPath) throws Exception {
-        List<String> cmd = List.of(
+    private static String callToolViaInspector(String toolName, String... toolArgs) throws Exception {
+        List<String> cmd = new java.util.ArrayList<>(List.of(
                 "npx", "--yes", INSPECTOR_VERSION, "--cli",
                 "java", "-jar", packaged_jar.toString(),
                 "--method", "tools/call",
-                "--tool-name", "git_status",
-                "--tool-arg", "path=" + repoPath
-        );
+                "--tool-name", toolName));
+        for (String arg : toolArgs) {
+            cmd.add("--tool-arg");
+            cmd.add(arg);
+        }
 
-        Path outFile = Files.createTempFile("git-inspector-out", ".json");
-        Path errFile = Files.createTempFile("git-inspector-err", ".log");
+        Path outFile = Files.createTempFile("git-inspector-out-" + toolName, ".json");
+        Path errFile = Files.createTempFile("git-inspector-err-" + toolName, ".log");
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.redirectOutput(outFile.toFile());
@@ -157,7 +242,7 @@ class GitInspectorAcceptanceIT {
         if (!exited) {
             proc.destroyForcibly();
             throw new AssertionError("MCP Inspector timed out after " + INSPECTOR_TIMEOUT_SECONDS
-                    + "s.\n--- stderr ---\n" + Files.readString(errFile));
+                    + "s for tool " + toolName + ".\n--- stderr ---\n" + Files.readString(errFile));
         }
 
         String stdout = Files.readString(outFile, StandardCharsets.UTF_8);
@@ -165,10 +250,14 @@ class GitInspectorAcceptanceIT {
 
         String envelopeJson = extractEnvelopeViaJq(outFile, stdout, stderr);
         assertThat(envelopeJson)
-                .as("Inspector output must contain a valid envelope JSON.\n"
+                .as("Inspector output must contain a valid envelope JSON for tool " + toolName + ".\n"
                         + "--- stdout ---\n%s\n--- stderr ---\n%s", stdout, stderr)
                 .isNotBlank();
         return envelopeJson;
+    }
+
+    private static String callGitStatusViaInspector(String repoPath) throws Exception {
+        return callToolViaInspector("git_status", "path=" + repoPath);
     }
 
     private static String extractEnvelopeViaJq(Path outFile, String stdout, String stderr)

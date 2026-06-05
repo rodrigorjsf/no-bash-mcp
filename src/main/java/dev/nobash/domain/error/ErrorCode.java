@@ -66,5 +66,13 @@ public enum ErrorCode {
      * parser turn empty/garbage stdout into a misleading "clean repo" (false-green). The hint
      * points the agent at running the verb from inside a checked-out repository.
      */
-    NOT_A_GIT_REPOSITORY
+    NOT_A_GIT_REPOSITORY,
+
+    /**
+     * The commit reference ({@code sha}, abbreviated SHA, tag, or symbolic ref) supplied to
+     * {@code git_show} does not resolve to a known commit in the repository — {@code git}
+     * exits non-zero. The hint points the agent at using a valid ref visible in {@code git_log}
+     * output (PRD-002, issue #26).
+     */
+    COMMIT_NOT_FOUND
 }
