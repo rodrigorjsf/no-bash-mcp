@@ -217,6 +217,48 @@ class GitInspectorAcceptanceIT {
                 .isEqualTo("COMMIT_NOT_FOUND");
     }
 
+    // ---- AC: git_diff on a dirty repo → ok=true, gitDiff[] non-empty, handle present ----
+
+    @Test
+    void inspector_cli_git_diff_on_a_dirty_repo_returns_ok_true_with_files_and_handle(
+            @TempDir Path tmp) throws Exception {
+        GitRepoFixture repo = GitRepoFixture.init(tmp)
+                .writeFile("seed.txt", "original\n").add().commit("seed");
+        // Stage a modification so git diff HEAD sees a change.
+        repo.writeFile("seed.txt", "original\nchanged\n").add("seed.txt");
+
+        String envelopeJson = callToolViaInspector("git_diff",
+                "path=" + repo.dir().toString());
+
+        String okValue = jqExtract(envelopeJson, ".ok");
+        assertThat(okValue.strip()).as("dirty repo git_diff: ok must be true").isEqualTo("true");
+
+        String filesLen = jqExtract(envelopeJson, ".gitDiff | length");
+        assertThat(Integer.parseInt(filesLen.strip()))
+                .as("dirty repo git_diff: gitDiff[] must be non-empty")
+                .isGreaterThan(0);
+
+        String handleId = jqExtract(envelopeJson, ".handle.id");
+        assertThat(handleId.strip())
+                .as("git_diff: handle.id must be present")
+                .isNotBlank();
+    }
+
+    @Test
+    void inspector_cli_git_diff_on_a_non_repo_returns_NOT_A_GIT_REPOSITORY(
+            @TempDir Path plainDir) throws Exception {
+        String envelopeJson = callToolViaInspector("git_diff",
+                "path=" + plainDir.toString());
+
+        String okValue = jqExtract(envelopeJson, ".ok");
+        assertThat(okValue.strip()).as("non-repo git_diff: ok must be false").isEqualTo("false");
+
+        String errorCode = jqExtract(envelopeJson, ".error.code");
+        assertThat(errorCode.strip())
+                .as("non-repo git_diff: error.code must be NOT_A_GIT_REPOSITORY")
+                .isEqualTo("NOT_A_GIT_REPOSITORY");
+    }
+
     // ---- helpers ----
 
     private static String callToolViaInspector(String toolName, String... toolArgs) throws Exception {

@@ -4,6 +4,7 @@ import dev.nobash.domain.error.ErrorCode;
 import dev.nobash.domain.error.OperationalError;
 import dev.nobash.domain.git.GitCommit;
 import dev.nobash.domain.git.GitCommitDetail;
+import dev.nobash.domain.git.GitDiffEntry;
 import dev.nobash.domain.git.GitStatus;
 import dev.nobash.domain.git.GitStatusEntry;
 import dev.nobash.domain.result.BuildSummary;
@@ -66,12 +67,15 @@ import java.util.List;
  * @param gitLog          the capped commit list; present only on a git_log result (PRD-002, issue #26)
  * @param gitShow         the commit detail (metadata + body); present only on a git_show result
  *                        (PRD-002, issue #26); the diff is behind the {@code handle}
+ * @param gitDiff         the inline diff file summary ({@code files[]}); present only on a
+ *                        git_diff result (PRD-002, issue #27); the full patch is behind the
+ *                        {@code handle}
  * @param error           the operational error when this is the op-error shape; null otherwise
  * @param handle          a token to retrieve stashed raw output later; null when nothing was stashed
  * @param untrusted       {@code true} when this envelope carries repo-derived content that has been
  *                        neutralized but is still untrusted data ({@code failures[]},
  *                        {@code diagnostics[]}, {@code gitStatus}, {@code gitLog},
- *                        or {@code gitShow})
+ *                        {@code gitShow}, or {@code gitDiff})
  */
 @Serdeable
 @Introspected
@@ -86,6 +90,7 @@ public record Envelope(boolean ok,
                        @Nullable GitStatus gitStatus,
                        @Nullable List<GitCommit> gitLog,
                        @Nullable GitCommitDetail gitShow,
+                       @Nullable List<GitDiffEntry> gitDiff,
                        @Nullable OperationalError error,
                        @Nullable Handle handle,
                        boolean untrusted) {
@@ -96,7 +101,7 @@ public record Envelope(boolean ok,
      * CONTEXT.md "Noise"). Server-authored content only; marked {@code untrusted=false}.
      */
     public static Envelope success(String verb, String manager, Summary summary, @Nullable Handle handle) {
-        return new Envelope(true, verb, manager, summary, null, null, null, null, null, null, null, handle, false);
+        return new Envelope(true, verb, manager, summary, null, null, null, null, null, null, null, null, handle, false);
     }
 
     /**
@@ -106,7 +111,7 @@ public record Envelope(boolean ok,
      */
     public static Envelope buildSuccess(String verb, String manager, BuildSummary buildSummary,
                                         @Nullable Handle handle) {
-        return new Envelope(true, verb, manager, null, null, null, buildSummary, null, null, null, null, handle, false);
+        return new Envelope(true, verb, manager, null, null, null, buildSummary, null, null, null, null, null, handle, false);
     }
 
     /**
@@ -122,7 +127,7 @@ public record Envelope(boolean ok,
                 .map(Envelope::neutralizeDiagnostic)
                 .toList();
         return new Envelope(false, verb, manager, null, null, List.copyOf(neutralized),
-                buildSummary, null, null, null, null, handle, true);
+                buildSummary, null, null, null, null, null, handle, true);
     }
 
     /**
@@ -142,7 +147,7 @@ public record Envelope(boolean ok,
         List<Finding> neutralized = failures.stream()
                 .map(Envelope::neutralizeFinding)
                 .toList();
-        return new Envelope(false, verb, manager, summary, List.copyOf(neutralized), null, null, null, null, null, null, handle, true);
+        return new Envelope(false, verb, manager, summary, List.copyOf(neutralized), null, null, null, null, null, null, null, handle, true);
     }
 
     /**
@@ -158,7 +163,7 @@ public record Envelope(boolean ok,
      */
     public static Envelope gitStatus(String verb, GitStatus status, @Nullable Handle handle) {
         return new Envelope(true, verb, null, null, null, null, null,
-                neutralizeGitStatus(status), null, null, null, handle, true);
+                neutralizeGitStatus(status), null, null, null, null, handle, true);
     }
 
     /**
@@ -178,7 +183,7 @@ public record Envelope(boolean ok,
                 .map(Envelope::neutralizeGitCommit)
                 .toList();
         return new Envelope(true, verb, null, null, null, null, null, null,
-                List.copyOf(neutralized), null, null, null, true);
+                List.copyOf(neutralized), null, null, null, null, true);
     }
 
     /**
@@ -195,7 +200,31 @@ public record Envelope(boolean ok,
      */
     public static Envelope gitShow(String verb, GitCommitDetail detail, @Nullable Handle handle) {
         return new Envelope(true, verb, null, null, null, null, null, null, null,
-                neutralizeGitCommitDetail(detail), null, handle, true);
+                neutralizeGitCommitDetail(detail), null, null, handle, true);
+    }
+
+    /**
+     * Build a git-diff success envelope ({@code ok=true}) carrying the inline diff summary
+     * ({@code gitDiff[]}) (PRD-002, issue #27). The full patch is stashed behind {@code handle}
+     * and retrievable via {@code get_log}. {@code manager} is null — git verbs detect no package
+     * manager.
+     *
+     * <p><b>P9 neutralization:</b> the {@code path} field of each {@link GitDiffEntry} is
+     * repo-derived and is P9-neutralized before storing ({@code SOURCE_FILE_CAP}). The
+     * {@code status} letter is a server-controlled value and is not neutralized. The envelope is
+     * marked {@code untrusted=true}.</p>
+     *
+     * @param verb    the verb name ({@code "git_diff"})
+     * @param entries the inline diff file summary (path, added, deleted, status)
+     * @param handle  the handle pointing at the stashed full patch output; may be null
+     * @return the git-diff envelope
+     */
+    public static Envelope gitDiff(String verb, List<GitDiffEntry> entries, @Nullable Handle handle) {
+        List<GitDiffEntry> neutralized = entries.stream()
+                .map(Envelope::neutralizeGitDiffEntry)
+                .toList();
+        return new Envelope(true, verb, null, null, null, null, null, null, null, null,
+                List.copyOf(neutralized), null, handle, true);
     }
 
     /**
@@ -213,7 +242,7 @@ public record Envelope(boolean ok,
      */
     public static Envelope operationalError(String verb, ErrorCode code, String message, String hint,
                                             @Nullable Handle handle) {
-        return new Envelope(false, verb, null, null, null, null, null, null, null, null, new OperationalError(code, message, hint), handle, false);
+        return new Envelope(false, verb, null, null, null, null, null, null, null, null, null, new OperationalError(code, message, hint), handle, false);
     }
 
     // ---- P9 neutralization helpers ----
@@ -315,5 +344,16 @@ public record Envelope(boolean ok,
         String subject = OutboundNeutralizer.neutralize(detail.subject(), OutboundNeutralizer.MESSAGE_CAP);
         String body    = OutboundNeutralizer.neutralize(detail.body(),    OutboundNeutralizer.DETAIL_CAP);
         return new GitCommitDetail(detail.sha(), detail.abbrev(), author, detail.dateIso(), subject, body);
+    }
+
+    /**
+     * Apply {@link OutboundNeutralizer} to the repo-derived fields of a {@link GitDiffEntry}:
+     * {@code path} ({@code SOURCE_FILE_CAP}). The {@code status} letter is a server-controlled
+     * value and is not neutralized. The {@code added}/{@code deleted} counts are integers and
+     * need no neutralization.
+     */
+    private static GitDiffEntry neutralizeGitDiffEntry(GitDiffEntry entry) {
+        String path = OutboundNeutralizer.neutralize(entry.path(), OutboundNeutralizer.SOURCE_FILE_CAP);
+        return new GitDiffEntry(path, entry.added(), entry.deleted(), entry.status());
     }
 }
