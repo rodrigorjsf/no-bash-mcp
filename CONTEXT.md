@@ -133,6 +133,33 @@ The thin companion skill that registers the MCP, writes the transitional git den
 suggests removing the Bash permission. A distinct deliverable from the MCP server.
 _Avoid_: installer, setup, plugin.
 
+**Distribution channel**:
+The route by which the native binary reaches a user's machine without that user building it. A
+property of *delivery*, distinct from the **native binary** (the thing delivered) and from the
+**Bootstrap skill** (which registers the MCP in the harness config — it does not deliver the
+binary). v1 realizes exactly one channel; further channels are roadmapped.
+_Avoid_: install method, package source, registry, download (a download is one channel, not the concept).
+
+**Native binary**:
+The runtime-free, host-specific form of the MCP server — a single executable that runs without a
+separately installed language runtime. The payload a **Platform package** carries and a **Launcher**
+selects and runs. Distinct from the **MCP server** as a deliverable (one server, many host-specific
+binaries).
+_Avoid_: image, executable (unqualified), artifact, build output.
+
+**Platform package**:
+The per-OS/arch unit that carries exactly one **native binary**; only the unit matching the host's
+OS and architecture is obtained. Distinct from the **Launcher** (which selects among them) and from
+the **native binary** (its payload). One per supported OS×arch tuple.
+_Avoid_: scoped package, optional dependency, bundle, archive, variant.
+
+**Launcher**:
+The small package the harness invokes that, each session, selects the **native binary** matching the
+host's OS and architecture and runs it, forwarding the agent's I/O. Distinct from the **native
+binary** it launches and from the **Bootstrap skill** (Bootstrap registers the MCP once; the
+Launcher selects-and-runs on every session).
+_Avoid_: shim (the impl/code term for the same package), wrapper, loader, trampoline, bootstrap (the Bootstrap skill is a separate concept).
+
 ### Forge inspection
 
 **Forge**:

@@ -37,6 +37,23 @@
 - **Streaming / progress** notifications for long runs (MCP progress).
 - **Toolchain / version reporting** in `describe_project` (JDK, Node).
 - **Build-artifact path** reporting.
+- **`.mcpb` one-click desktop channel** — a parallel channel for GUI install in Claude Desktop /
+  Claude Code (MCP Bundle, ex-DXT; `server.type="binary"`, self-contained). Deferred because the
+  `.mcpb` manifest has **zero integrity / signing fields** (would need external supply-chain trust,
+  e.g. `mpak` — weak for a security tool), and `platform_overrides` keys by `process.platform`
+  (`win32`/`darwin`/`linux`) **not by arch** (no `${arch}` variable) → per-arch packaging is awkward
+  (one bundle per OS×arch, or a launcher). It also sets MOTW / quarantine, which **forces the paid
+  Apple notarization** deferred below. See decision-log **D44**, gotcha **G19**, and `ADR-0010`.
+- **`curl | sh` / Homebrew / Scoop PATH installer** — a zero-runtime-dependency channel, the
+  **truest to the native thesis** (no Node shim in front of the binary, unlike the v1 npx launcher).
+  Deferred because it needs a discrete install step **and** these channels set MOTW / quarantine →
+  requires **paid Apple Developer ID + notarization** (~$99/yr) and a **Windows OV/EV
+  code-signing cert**. See decision-log **D44**, `ADR-0010`, and `build-and-distribution.md`.
+- **JVM-jar fallback** — an explicit escape hatch for the platforms GraalVM native-image for JDK 25
+  does not cover (`win32-arm64`; `darwin-x64` / Intel). Deferred because it **reintroduces the JRE
+  dependency native exists to kill** (YAGNI); `win32-arm64` runs the `win32-x64` build under Windows
+  emulation meanwhile. See decision-log **D40** and `build-and-distribution.md`.
+  _Open: add only on evidence of a real user on an uncovered platform._
 
 ## Pre-PRD spikes (de-risk before freezing)
 
@@ -49,6 +66,13 @@
 - **Forge read-only spike** — fetch GitHub CI check status + a failed-job log (via `handle`) and a
   PR view/diff, against `github.com` **and** a GHES-style configurable base URL, normalized into the
   common envelope. De-risks the self-hosted seams and the forge-side envelope before GitLab.
+- **Distribution-channel spike** — validate the *chosen primary channel* end-to-end (ADR-0010): an
+  `npx -y no-bash-mcp@<pin>` invocation resolves the host's `@no-bash-mcp/<os>-<arch>` platform
+  package via npm `os`/`cpu`, the launcher shim spawns the native binary, and the **STDIO JSON-RPC
+  handshake** completes — including the **ad-hoc-signed `darwin-arm64`** leg actually launching (not
+  `SIGKILL`). Primary evidence this exact mechanism fails in the wild: `openai/codex#21199` (an
+  npm-delivered native arm64 binary that does not spawn). Spike-gated, not assumed (G15 discipline);
+  de-risks the channel before any package is published.
 
 ## Open questions (still to grill)
 
