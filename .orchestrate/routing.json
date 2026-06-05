@@ -1,0 +1,52 @@
+{
+  "trivial": {
+    "investigator": null,
+    "implementer": {
+      "model": "sonnet",
+      "effort": "standard"
+    },
+    "reviewer": {
+      "model": "sonnet",
+      "effort": "standard"
+    },
+    "conflict-resolver": {
+      "model": "sonnet",
+      "effort": "standard"
+    }
+  },
+  "standard": {
+    "investigator": null,
+    "implementer": {
+      "model": "sonnet",
+      "effort": "standard"
+    },
+    "reviewer": {
+      "model": "opus",
+      "effort": "standard"
+    },
+    "conflict-resolver": {
+      "model": "opus",
+      "effort": "standard"
+    }
+  },
+  "complex": {
+    "investigator": {
+      "model": "opus",
+      "effort": "deep"
+    },
+    "implementer": {
+      "model": "opus",
+      "effort": "deep"
+    },
+    "reviewer": {
+      "model": "opus",
+      "effort": "deep"
+    },
+    "conflict-resolver": {
+      "model": "opus",
+      "effort": "deep"
+    }
+  },
+  "intraWaveConcurrency": "sequential",
+  "continuationBudget": 2
+}

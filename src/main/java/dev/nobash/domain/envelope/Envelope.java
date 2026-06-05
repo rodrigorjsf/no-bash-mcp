@@ -2,6 +2,14 @@ package dev.nobash.domain.envelope;
 
 import dev.nobash.domain.error.ErrorCode;
 import dev.nobash.domain.error.OperationalError;
+import dev.nobash.domain.git.GitCommit;
+import dev.nobash.domain.git.GitCommitDetail;
+import dev.nobash.domain.git.GitBranchEntry;
+import dev.nobash.domain.git.GitDiffEntry;
+import dev.nobash.domain.git.GitStatus;
+import dev.nobash.domain.git.GitStatusEntry;
+import dev.nobash.domain.result.BuildSummary;
+import dev.nobash.domain.result.CompileDiagnostic;
 import dev.nobash.domain.result.ContainerFinding;
 import dev.nobash.domain.result.Finding;
 import dev.nobash.domain.result.SourceRef;
@@ -41,15 +49,36 @@ import java.util.List;
  * The success and operational-error shapes carry only server-authored content; they are not
  * neutralized and are marked {@code untrusted=false}.</p>
  *
- * @param ok       whether the operation itself succeeded (the application-layer failure floor)
- * @param verb     the logical operation invoked (e.g. {@code run_tests})
- * @param manager  the detected manager for ecosystem verbs ({@code mvn}); null when none
- * @param summary  the TEST-level counts; present on success / test-failure, null on op-error
- * @param failures the normalized findings (test- and container-level); present only on test-failure
- * @param error    the operational error when this is the op-error shape; null otherwise
- * @param handle   a token to retrieve stashed raw output later; null when nothing was stashed
- * @param untrusted {@code true} when this envelope carries repo-derived content in
- *                  {@code failures[]} that has been neutralized but is still untrusted data
+ * <p><b>git-status shape (PRD-002).</b> The read-only git verbs add a fourth carrier:
+ * {@code gitStatus} holds the normalized {@link GitStatus} parsed from {@code git status
+ * --porcelain=v2 --branch}. {@code manager} is null on a git envelope (git is ecosystem-agnostic).
+ * Branch names and file paths are repo-derived, so they are P9-neutralized when the envelope is
+ * built and the envelope is marked {@code untrusted=true}, mirroring the build compile-failure
+ * shape.</p>
+ *
+ * @param ok              whether the operation itself succeeded (the application-layer failure floor)
+ * @param verb            the logical operation invoked (e.g. {@code run_tests}, {@code build})
+ * @param manager         the detected manager for ecosystem verbs ({@code mvn}); null for git verbs
+ * @param summary         the TEST-level counts; present on run_tests success/failure, null otherwise
+ * @param failures        the normalized test findings; present only on run_tests test-failure
+ * @param diagnostics     the compile diagnostics; present only on build compile-failure (ADR-0009)
+ * @param buildSummary    the compile-level counts ({@code errors}/{@code warnings}); present on
+ *                        build success and build compile-failure (ADR-0009)
+ * @param gitStatus       the normalized git-status shape; present only on a git_status result (PRD-002)
+ * @param gitLog          the capped commit list; present only on a git_log result (PRD-002, issue #26)
+ * @param gitShow         the commit detail (metadata + body); present only on a git_show result
+ *                        (PRD-002, issue #26); the diff is behind the {@code handle}
+ * @param gitDiff         the inline diff file summary ({@code files[]}); present only on a
+ *                        git_diff result (PRD-002, issue #27); the full patch is behind the
+ *                        {@code handle}
+ * @param gitBranch       the normalized branch list; present only on a git_branch result
+ *                        (PRD-002, issue #28); output is bounded — no stash/handle needed
+ * @param error           the operational error when this is the op-error shape; null otherwise
+ * @param handle          a token to retrieve stashed raw output later; null when nothing was stashed
+ * @param untrusted       {@code true} when this envelope carries repo-derived content that has been
+ *                        neutralized but is still untrusted data ({@code failures[]},
+ *                        {@code diagnostics[]}, {@code gitStatus}, {@code gitLog},
+ *                        {@code gitShow}, {@code gitDiff}, or {@code gitBranch})
  */
 @Serdeable
 @Introspected
@@ -59,17 +88,50 @@ public record Envelope(boolean ok,
                        @Nullable String manager,
                        @Nullable Summary summary,
                        @Nullable List<Finding> failures,
+                       @Nullable List<CompileDiagnostic> diagnostics,
+                       @Nullable BuildSummary buildSummary,
+                       @Nullable GitStatus gitStatus,
+                       @Nullable List<GitCommit> gitLog,
+                       @Nullable GitCommitDetail gitShow,
+                       @Nullable List<GitDiffEntry> gitDiff,
+                       @Nullable List<GitBranchEntry> gitBranch,
                        @Nullable OperationalError error,
                        @Nullable Handle handle,
                        boolean untrusted) {
 
     /**
-     * Build a counts-only success envelope ({@code ok=true}). Surfaces NO report — a green run
-     * gives the agent the counts and nothing to triage (token efficiency, CONTEXT.md "Noise").
-     * Server-authored content only; marked {@code untrusted=false}.
+     * Build a counts-only success envelope ({@code ok=true}) for {@code run_tests}. Surfaces NO
+     * report — a green run gives the agent the counts and nothing to triage (token efficiency,
+     * CONTEXT.md "Noise"). Server-authored content only; marked {@code untrusted=false}.
      */
     public static Envelope success(String verb, String manager, Summary summary, @Nullable Handle handle) {
-        return new Envelope(true, verb, manager, summary, null, null, handle, false);
+        return new Envelope(true, verb, manager, summary, null, null, null, null, null, null, null, null, null, handle, false);
+    }
+
+    /**
+     * Build a counts-only success envelope ({@code ok=true}) for the {@code build} verb (ADR-0009).
+     * Returns {@code buildSummary:{errors:0,warnings:N}} and no {@code diagnostics[]}.
+     * Server-authored content only; marked {@code untrusted=false}.
+     */
+    public static Envelope buildSuccess(String verb, String manager, BuildSummary buildSummary,
+                                        @Nullable Handle handle) {
+        return new Envelope(true, verb, manager, null, null, null, buildSummary, null, null, null, null, null, null, handle, false);
+    }
+
+    /**
+     * Build a compile-failure envelope ({@code ok=false}) for the {@code build} verb (ADR-0009).
+     * Carries {@code diagnostics[]} (parse of the compiler output) and {@code buildSummary} with
+     * the error/warning counts. The {@code message} field of each {@link CompileDiagnostic} is
+     * repo-derived; the diagnostics list is P9-neutralized before storing, and the envelope is
+     * marked {@code untrusted=true}.
+     */
+    public static Envelope buildFailure(String verb, String manager, BuildSummary buildSummary,
+                                        List<CompileDiagnostic> diagnostics, @Nullable Handle handle) {
+        List<CompileDiagnostic> neutralized = diagnostics.stream()
+                .map(Envelope::neutralizeDiagnostic)
+                .toList();
+        return new Envelope(false, verb, manager, null, null, List.copyOf(neutralized),
+                buildSummary, null, null, null, null, null, null, handle, true);
     }
 
     /**
@@ -89,7 +151,108 @@ public record Envelope(boolean ok,
         List<Finding> neutralized = failures.stream()
                 .map(Envelope::neutralizeFinding)
                 .toList();
-        return new Envelope(false, verb, manager, summary, List.copyOf(neutralized), null, handle, true);
+        return new Envelope(false, verb, manager, summary, List.copyOf(neutralized), null, null, null, null, null, null, null, null, handle, true);
+    }
+
+    /**
+     * Build a git-status success envelope ({@code ok=true}) carrying the normalized
+     * {@link GitStatus} (PRD-002, issue #24). {@code manager} is null — git verbs detect no
+     * package manager.
+     *
+     * <p><b>P9 neutralization:</b> the branch name, upstream, and every changed-path entry in the
+     * status are repo-derived (a repo can name a branch or file with ANSI/zero-width bytes), so
+     * each string is passed through {@link OutboundNeutralizer} before being stored. The envelope
+     * is marked {@code untrusted=true}, mirroring the build compile-failure shape — git_status is
+     * the foundational read-only git shape and the later git verbs inherit this discipline.</p>
+     */
+    public static Envelope gitStatus(String verb, GitStatus status, @Nullable Handle handle) {
+        return new Envelope(true, verb, null, null, null, null, null,
+                neutralizeGitStatus(status), null, null, null, null, null, handle, true);
+    }
+
+    /**
+     * Build a git-log success envelope ({@code ok=true}) carrying the capped commit list (PRD-002,
+     * issue #26). {@code manager} is null — git verbs detect no package manager.
+     *
+     * <p><b>P9 neutralization:</b> author and subject are repo-derived and are P9-neutralized
+     * before storing. sha/abbrev/dateIso are git-generated and safe. The envelope is marked
+     * {@code untrusted=true}.</p>
+     *
+     * @param verb    the verb name ({@code "git_log"})
+     * @param commits the capped commit list to include in the envelope
+     * @return the git-log envelope
+     */
+    public static Envelope gitLog(String verb, List<GitCommit> commits) {
+        List<GitCommit> neutralized = commits.stream()
+                .map(Envelope::neutralizeGitCommit)
+                .toList();
+        return new Envelope(true, verb, null, null, null, null, null, null,
+                List.copyOf(neutralized), null, null, null, null, null, true);
+    }
+
+    /**
+     * Build a git-show success envelope ({@code ok=true}) carrying the commit detail (PRD-002,
+     * issue #26). The diff is stashed behind {@code handle} and retrievable via {@code get_log}.
+     *
+     * <p><b>P9 neutralization:</b> author, subject, and body are repo-derived and P9-neutralized.
+     * sha/abbrev/dateIso are git-generated and safe. The envelope is marked {@code untrusted=true}.</p>
+     *
+     * @param verb   the verb name ({@code "git_show"})
+     * @param detail the commit detail (metadata + body; diff is NOT embedded here)
+     * @param handle the handle pointing at the stashed diff raw output; may be null
+     * @return the git-show envelope
+     */
+    public static Envelope gitShow(String verb, GitCommitDetail detail, @Nullable Handle handle) {
+        return new Envelope(true, verb, null, null, null, null, null, null, null,
+                neutralizeGitCommitDetail(detail), null, null, null, handle, true);
+    }
+
+    /**
+     * Build a git-diff success envelope ({@code ok=true}) carrying the inline diff summary
+     * ({@code gitDiff[]}) (PRD-002, issue #27). The full patch is stashed behind {@code handle}
+     * and retrievable via {@code get_log}. {@code manager} is null — git verbs detect no package
+     * manager.
+     *
+     * <p><b>P9 neutralization:</b> the {@code path} field of each {@link GitDiffEntry} is
+     * repo-derived and is P9-neutralized before storing ({@code SOURCE_FILE_CAP}). The
+     * {@code status} letter is a server-controlled value and is not neutralized. The envelope is
+     * marked {@code untrusted=true}.</p>
+     *
+     * @param verb    the verb name ({@code "git_diff"})
+     * @param entries the inline diff file summary (path, added, deleted, status)
+     * @param handle  the handle pointing at the stashed full patch output; may be null
+     * @return the git-diff envelope
+     */
+    public static Envelope gitDiff(String verb, List<GitDiffEntry> entries, @Nullable Handle handle) {
+        List<GitDiffEntry> neutralized = entries.stream()
+                .map(Envelope::neutralizeGitDiffEntry)
+                .toList();
+        return new Envelope(true, verb, null, null, null, null, null, null, null, null,
+                List.copyOf(neutralized), null, null, handle, true);
+    }
+
+    /**
+     * Build a git-branch success envelope ({@code ok=true}) carrying the normalized branch list
+     * (PRD-002, issue #28). {@code manager} is null — git verbs detect no package manager.
+     * There is no handle: {@code git branch} output is bounded (one line per local branch) and
+     * never large enough to warrant a stash/pagination.
+     *
+     * <p><b>P9 neutralization:</b> the {@code name} and {@code upstream} fields of each
+     * {@link GitBranchEntry} are repo-derived and are P9-neutralized before storing
+     * ({@code SOURCE_FILE_CAP}). The {@code current} flag and the {@code ahead}/{@code behind}
+     * counts are server-controlled and need no neutralization. The envelope is marked
+     * {@code untrusted=true}.</p>
+     *
+     * @param verb    the verb name ({@code "git_branch"})
+     * @param entries the normalized branch list
+     * @return the git-branch envelope
+     */
+    public static Envelope gitBranch(String verb, List<GitBranchEntry> entries) {
+        List<GitBranchEntry> neutralized = entries.stream()
+                .map(Envelope::neutralizeGitBranchEntry)
+                .toList();
+        return new Envelope(true, verb, null, null, null, null, null, null, null, null, null,
+                List.copyOf(neutralized), null, null, true);
     }
 
     /**
@@ -107,7 +270,7 @@ public record Envelope(boolean ok,
      */
     public static Envelope operationalError(String verb, ErrorCode code, String message, String hint,
                                             @Nullable Handle handle) {
-        return new Envelope(false, verb, null, null, null, new OperationalError(code, message, hint), handle, false);
+        return new Envelope(false, verb, null, null, null, null, null, null, null, null, null, null, new OperationalError(code, message, hint), handle, false);
     }
 
     // ---- P9 neutralization helpers ----
@@ -148,5 +311,89 @@ public record Envelope(boolean ok,
         if (src == null) return null;
         String file = OutboundNeutralizer.neutralize(src.file(), OutboundNeutralizer.SOURCE_FILE_CAP);
         return new SourceRef(file, src.line());
+    }
+
+    /**
+     * Apply {@link OutboundNeutralizer} to all repo-derived string fields of a
+     * {@link CompileDiagnostic}. The {@code file} and {@code message} fields are untrusted
+     * compiler output; {@code severity} is a server-controlled value and is not neutralized.
+     */
+    private static CompileDiagnostic neutralizeDiagnostic(CompileDiagnostic d) {
+        String file    = OutboundNeutralizer.neutralize(d.file(),    OutboundNeutralizer.SOURCE_FILE_CAP);
+        String message = OutboundNeutralizer.neutralize(d.message(), OutboundNeutralizer.MESSAGE_CAP);
+        return new CompileDiagnostic(file, d.line(), d.col(), d.severity(), message);
+    }
+
+    /**
+     * Apply {@link OutboundNeutralizer} to all repo-derived string fields of a {@link GitStatus}:
+     * the branch name, the upstream, and every changed-path entry's {@code path}/{@code origPath}.
+     * The {@code code} field is a server-controlled porcelain status code and is not neutralized;
+     * the ahead/behind/detached fields are numeric/boolean and need no neutralization.
+     * Path-shaped strings use {@code SOURCE_FILE_CAP}.
+     */
+    private static GitStatus neutralizeGitStatus(GitStatus status) {
+        String branch   = OutboundNeutralizer.neutralize(status.branch(),   OutboundNeutralizer.SOURCE_FILE_CAP);
+        String upstream = OutboundNeutralizer.neutralize(status.upstream(), OutboundNeutralizer.SOURCE_FILE_CAP);
+        return new GitStatus(
+                branch,
+                status.detached(),
+                upstream,
+                status.ahead(),
+                status.behind(),
+                status.staged().stream().map(Envelope::neutralizeGitEntry).toList(),
+                status.unstaged().stream().map(Envelope::neutralizeGitEntry).toList(),
+                status.untracked().stream().map(Envelope::neutralizeGitEntry).toList());
+    }
+
+    private static GitStatusEntry neutralizeGitEntry(GitStatusEntry entry) {
+        String path     = OutboundNeutralizer.neutralize(entry.path(),     OutboundNeutralizer.SOURCE_FILE_CAP);
+        String origPath = OutboundNeutralizer.neutralize(entry.origPath(), OutboundNeutralizer.SOURCE_FILE_CAP);
+        return new GitStatusEntry(path, entry.code(), origPath);
+    }
+
+    /**
+     * Apply {@link OutboundNeutralizer} to the repo-derived fields of a {@link GitCommit}:
+     * {@code author} (MESSAGE_CAP) and {@code subject} (MESSAGE_CAP). The sha/abbrev/dateIso
+     * fields are git-generated and safe; they are not neutralized.
+     */
+    private static GitCommit neutralizeGitCommit(GitCommit commit) {
+        String author  = OutboundNeutralizer.neutralize(commit.author(),  OutboundNeutralizer.MESSAGE_CAP);
+        String subject = OutboundNeutralizer.neutralize(commit.subject(), OutboundNeutralizer.MESSAGE_CAP);
+        return new GitCommit(commit.sha(), commit.abbrev(), author, commit.dateIso(), subject);
+    }
+
+    /**
+     * Apply {@link OutboundNeutralizer} to the repo-derived fields of a {@link GitCommitDetail}:
+     * {@code author} (MESSAGE_CAP), {@code subject} (MESSAGE_CAP), and {@code body} (DETAIL_CAP).
+     * The sha/abbrev/dateIso fields are git-generated and safe; they are not neutralized.
+     */
+    private static GitCommitDetail neutralizeGitCommitDetail(GitCommitDetail detail) {
+        String author  = OutboundNeutralizer.neutralize(detail.author(),  OutboundNeutralizer.MESSAGE_CAP);
+        String subject = OutboundNeutralizer.neutralize(detail.subject(), OutboundNeutralizer.MESSAGE_CAP);
+        String body    = OutboundNeutralizer.neutralize(detail.body(),    OutboundNeutralizer.DETAIL_CAP);
+        return new GitCommitDetail(detail.sha(), detail.abbrev(), author, detail.dateIso(), subject, body);
+    }
+
+    /**
+     * Apply {@link OutboundNeutralizer} to the repo-derived fields of a {@link GitDiffEntry}:
+     * {@code path} ({@code SOURCE_FILE_CAP}). The {@code status} letter is a server-controlled
+     * value and is not neutralized. The {@code added}/{@code deleted} counts are integers and
+     * need no neutralization.
+     */
+    private static GitDiffEntry neutralizeGitDiffEntry(GitDiffEntry entry) {
+        String path = OutboundNeutralizer.neutralize(entry.path(), OutboundNeutralizer.SOURCE_FILE_CAP);
+        return new GitDiffEntry(path, entry.added(), entry.deleted(), entry.status());
+    }
+
+    /**
+     * Apply {@link OutboundNeutralizer} to the repo-derived fields of a {@link GitBranchEntry}:
+     * {@code name} and {@code upstream} ({@code SOURCE_FILE_CAP}). The {@code current} boolean
+     * and the {@code ahead}/{@code behind} integers are server-controlled and need no
+     * neutralization.
+     */
+    private static GitBranchEntry neutralizeGitBranchEntry(GitBranchEntry entry) {
+        String name     = OutboundNeutralizer.neutralize(entry.name(),     OutboundNeutralizer.SOURCE_FILE_CAP);
+        String upstream = OutboundNeutralizer.neutralize(entry.upstream(), OutboundNeutralizer.SOURCE_FILE_CAP);
+        return new GitBranchEntry(name, entry.current(), upstream, entry.ahead(), entry.behind());
     }
 }

@@ -3,6 +3,7 @@ package dev.nobash.adapter.out.ecosystem.maven;
 import dev.nobash.domain.port.out.CommandExecutorPort;
 import dev.nobash.domain.port.out.ExecResult;
 import dev.nobash.domain.port.out.ExecSpec;
+import io.micronaut.context.annotation.Primary;
 import jakarta.inject.Singleton;
 
 import java.io.IOException;
@@ -41,8 +42,15 @@ import java.util.concurrent.TimeoutException;
  * hung child that never EOFs would otherwise block a calling-thread drain forever and the
  * timeout could never fire. Draining both off-thread keeps the bounded {@code waitFor} the only
  * thing the calling thread blocks on, so the deadline is always honoured.</p>
+ *
+ * <p><b>DI primary (PRD-002).</b> {@link CommandExecutorPort} now has two implementations: this
+ * Maven adapter and the git adapter ({@code adapter/out/git}). This bean is {@link Primary} so a
+ * bare {@code CommandExecutorPort} injection (the existing {@code RunTestsUseCase} /
+ * {@code RunBuildUseCase} ecosystem use-cases) resolves to Maven unchanged — no qualifier edits
+ * to those callers. The git use-case opts in explicitly via {@code @Named("git")}.</p>
  */
 @Singleton
+@Primary
 public class MavenCommandExecutor implements CommandExecutorPort {
 
     private static final String MANAGER = "mvn";

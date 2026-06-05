@@ -57,5 +57,28 @@ public enum ErrorCode {
      * target missing the required {@code ClassName#methodName} separator). Type validation is a
      * pre-exec guard — NO process is launched for an invalid target (issue #9, AC4).
      */
-    INVALID_TARGET
+    INVALID_TARGET,
+
+    /**
+     * A git verb ran against a path that exists and is a directory, but is NOT inside a git
+     * working tree — {@code git} exits non-zero (typically 128) with "not a git repository"
+     * (PRD-002, issue #24). The exit-code floor surfaces this rather than letting the porcelain
+     * parser turn empty/garbage stdout into a misleading "clean repo" (false-green). The hint
+     * points the agent at running the verb from inside a checked-out repository.
+     *
+     * <p><b>Not mapped here:</b> an empty-but-initialized repository ({@code git init} with no
+     * commits yet / unborn HEAD) is NOT mapped to this code. Such a repository IS a valid git
+     * working tree; {@code git_log} and {@code git_diff} return {@code ok=true} with empty results
+     * in that case (D36). Only a path that has never been {@code git init}-ed produces this
+     * error.</p>
+     */
+    NOT_A_GIT_REPOSITORY,
+
+    /**
+     * The commit reference ({@code sha}, abbreviated SHA, tag, or symbolic ref) supplied to
+     * {@code git_show} does not resolve to a known commit in the repository — {@code git}
+     * exits non-zero. The hint points the agent at using a valid ref visible in {@code git_log}
+     * output (PRD-002, issue #26).
+     */
+    COMMIT_NOT_FOUND
 }
