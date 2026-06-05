@@ -1,0 +1,7 @@
+[ERROR] COMPILATION ERROR :
+[ERROR] BUILD FAILURE
+[ERROR]
+[ERROR] For artifact {dev.nobash.fixture:fixture:0.0.1-SNAPSHOT:jar}:
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.11.0:testCompile (default-testCompile) on project fixture: Compilation failure
+[ERROR] -> [Help 1]
+[INFO] 1 error
