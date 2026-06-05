@@ -2,7 +2,6 @@
 paths:
   - "**/*.md"
 ---
-<!-- Migrated from CLAUDE.md:46-76 -->
 
 # Mermaid Diagram Conventions
 
