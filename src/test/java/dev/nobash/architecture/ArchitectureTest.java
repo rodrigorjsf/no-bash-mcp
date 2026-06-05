@@ -106,6 +106,38 @@ class ArchitectureTest {
     }
 
     @Test
+    void the_run_tests_use_case_depends_on_the_ecosystem_abstraction_not_a_concrete_adapter() {
+        // ADR-0011 — RunTestsUseCase is ecosystem-agnostic: it delegates ecosystem-specific
+        // behaviour to the EcosystemAdapter abstraction (in application.verb.tests) and must NEVER
+        // reach a concrete adapter in adapter.out.ecosystem.. (e.g. MavenEcosystemAdapter). DI wires
+        // the concrete bean in by interface; a use-case → concrete-adapter edge would couple the
+        // invariant floor to one ecosystem and is forbidden. With one adapter today this still holds
+        // (the use-case names only the interface) — tolerated empty by design.
+        ArchRule rule = noClasses()
+                .that().resideInAPackage(BASE + ".application.verb.tests..")
+                .should().dependOnClassesThat().resideInAPackage(BASE + ".adapter.out.ecosystem..")
+                .allowEmptyShould(true);
+
+        rule.check(productionClasses);
+    }
+
+    @Test
+    void no_ecosystem_adapter_depends_on_another_ecosystem_adapter() {
+        // ADR-0011 — each ecosystem adapter lives under adapter.out.ecosystem.<ecosystem>. No
+        // adapter may reach a SIBLING adapter: the floor is single-source in the use-case, so an
+        // adapter never needs another ecosystem's code. slices().notDependOnEachOther() groups by
+        // the captured ecosystem token and flags only cross-ecosystem edges (intra-ecosystem
+        // dependencies are legitimate). With one ecosystem today it matches nothing — tolerated by
+        // design, ready the moment Node/Go adapters land.
+        ArchRule rule = slices()
+                .matching(BASE + ".adapter.out.ecosystem.(*)..")
+                .should().notDependOnEachOther()
+                .allowEmptyShould(true);
+
+        rule.check(productionClasses);
+    }
+
+    @Test
     void the_layered_dependency_rule_holds() {
         // Only layers that have classes in THIS slice are declared (no empty infra/config
         // layers pre-declared). domain is the innermost; adapter the outermost.

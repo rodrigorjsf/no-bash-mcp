@@ -80,8 +80,9 @@ class RunTestsConcurrencyTest {
     }
 
     private static RunTestsUseCase useCaseWith(CommandExecutorPort port, ModuleLock lock) {
-        return new RunTestsUseCase(port, new ArgvBuilder(), new TestsFlagPolicy(),
-                new RawOutputStash(), lock);
+        return new RunTestsUseCase(port,
+                new dev.nobash.adapter.out.ecosystem.maven.MavenEcosystemAdapter(port, new ArgvBuilder()),
+                new TestsFlagPolicy(), new RawOutputStash(), lock);
     }
 
     private static Path mavenProject(Path dir) throws IOException {

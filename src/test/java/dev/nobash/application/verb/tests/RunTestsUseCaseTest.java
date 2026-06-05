@@ -63,7 +63,8 @@ class RunTestsUseCaseTest {
     }
 
     private RunTestsUseCase useCaseWith(CommandExecutorPort port) {
-        return new RunTestsUseCase(port, new ArgvBuilder(),
+        return new RunTestsUseCase(port,
+                new dev.nobash.adapter.out.ecosystem.maven.MavenEcosystemAdapter(port, new ArgvBuilder()),
                 new dev.nobash.application.policy.TestsFlagPolicy(),
                 new dev.nobash.application.runcache.RawOutputStash(),
                 new dev.nobash.infra.concurrency.ModuleLock());
