@@ -259,6 +259,49 @@ class GitInspectorAcceptanceIT {
                 .isEqualTo("NOT_A_GIT_REPOSITORY");
     }
 
+    // ---- AC: git_branch on a repo with branches → ok=true, gitBranch[] non-empty, current present ----
+
+    @Test
+    void inspector_cli_git_branch_on_a_repo_returns_ok_true_with_branch_list(
+            @TempDir Path tmp) throws Exception {
+        GitRepoFixture repo = GitRepoFixture.init(tmp)
+                .writeFile("file.txt", "content\n").add().commit("seed");
+        // Create an extra branch so the list has at least two entries.
+        repo.checkoutNewBranch("feature/extra");
+
+        String envelopeJson = callToolViaInspector("git_branch",
+                "path=" + repo.dir().toString());
+
+        String okValue = jqExtract(envelopeJson, ".ok");
+        assertThat(okValue.strip()).as("git_branch: ok must be true").isEqualTo("true");
+
+        String listLen = jqExtract(envelopeJson, ".gitBranch | length");
+        assertThat(Integer.parseInt(listLen.strip()))
+                .as("git_branch: gitBranch[] must be non-empty")
+                .isGreaterThan(0);
+
+        // Verify that at least one entry has current=true (the checked-out branch).
+        String currentCount = jqExtract(envelopeJson, "[.gitBranch[] | select(.current == true)] | length");
+        assertThat(Integer.parseInt(currentCount.strip()))
+                .as("git_branch: exactly one branch must have current=true")
+                .isEqualTo(1);
+    }
+
+    @Test
+    void inspector_cli_git_branch_on_a_non_repo_returns_NOT_A_GIT_REPOSITORY(
+            @TempDir Path plainDir) throws Exception {
+        String envelopeJson = callToolViaInspector("git_branch",
+                "path=" + plainDir.toString());
+
+        String okValue = jqExtract(envelopeJson, ".ok");
+        assertThat(okValue.strip()).as("non-repo git_branch: ok must be false").isEqualTo("false");
+
+        String errorCode = jqExtract(envelopeJson, ".error.code");
+        assertThat(errorCode.strip())
+                .as("non-repo git_branch: error.code must be NOT_A_GIT_REPOSITORY")
+                .isEqualTo("NOT_A_GIT_REPOSITORY");
+    }
+
     // ---- helpers ----
 
     private static String callToolViaInspector(String toolName, String... toolArgs) throws Exception {
