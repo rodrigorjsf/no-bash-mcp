@@ -65,6 +65,12 @@ public enum ErrorCode {
      * (PRD-002, issue #24). The exit-code floor surfaces this rather than letting the porcelain
      * parser turn empty/garbage stdout into a misleading "clean repo" (false-green). The hint
      * points the agent at running the verb from inside a checked-out repository.
+     *
+     * <p><b>Not mapped here:</b> an empty-but-initialized repository ({@code git init} with no
+     * commits yet / unborn HEAD) is NOT mapped to this code. Such a repository IS a valid git
+     * working tree; {@code git_log} and {@code git_diff} return {@code ok=true} with empty results
+     * in that case (D36). Only a path that has never been {@code git init}-ed produces this
+     * error.</p>
      */
     NOT_A_GIT_REPOSITORY,
 

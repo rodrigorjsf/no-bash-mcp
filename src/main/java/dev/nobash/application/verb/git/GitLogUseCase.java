@@ -108,8 +108,15 @@ public class GitLogUseCase {
                     "Raise `timeout` (up to the cap) or check for a pathological repository state.");
         }
 
-        // Non-zero exit floor: a path that is not a git working tree makes git exit non-zero.
+        // Non-zero exit floor: discriminate an empty-but-initialized repo (unborn HEAD, no
+        // commits yet) from a path that is genuinely not a git working tree.
+        // An empty repo IS a valid repository — git log exits 128 only because there are no
+        // commits to enumerate. Return ok-empty in that case; keep NOT_A_GIT_REPOSITORY
+        // for a real non-repo (issue #38, D36).
         if (result.exitCode() != 0) {
+            if (UnbornHeadProbe.isEmptyButInitialized(executor, dir, timeoutSeconds)) {
+                return Envelope.gitLog(VERB, List.of());
+            }
             return Envelope.operationalError(VERB, ErrorCode.NOT_A_GIT_REPOSITORY,
                     "Path is not inside a git repository (git exited with code "
                             + result.exitCode() + ").",

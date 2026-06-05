@@ -128,4 +128,19 @@ class GitStatusIntegrationTest {
         assertThat(env.error().code()).isEqualTo(ErrorCode.NOT_A_GIT_REPOSITORY);
         assertThat(env.gitStatus()).isNull();
     }
+
+    // ---- lock-in: empty-but-initialized repo (unborn HEAD) is already correct → stay ok ----
+
+    @Test
+    void an_empty_repo_with_no_commits_returns_ok_true(@TempDir Path tmp) {
+        // git_status uses `git status --porcelain=v2 --branch` which exits 0 even on an
+        // unborn-HEAD repo (git reports "initial" branch state). This lock-in test pins
+        // the already-correct behavior so it cannot silently regress.
+        GitRepoFixture repo = GitRepoFixture.init(tmp);
+
+        Envelope env = useCase().run(repo.dir().toString(), null);
+
+        assertThat(env.ok()).isTrue();
+        assertThat(env.gitStatus()).as("empty repo: gitStatus must be non-null").isNotNull();
+    }
 }

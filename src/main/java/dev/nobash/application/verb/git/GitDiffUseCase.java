@@ -114,6 +114,15 @@ public class GitDiffUseCase {
                     "Raise `timeout` (up to the cap) or check for a pathological repository state.");
         }
         if (numstatResult.exitCode() != 0) {
+            // Non-zero exit floor: discriminate an empty-but-initialized repo (unborn HEAD,
+            // no commits yet) from a path that is genuinely not a git working tree.
+            // An empty repo IS a valid repository — git diff HEAD exits 128 only because HEAD
+            // does not resolve yet. Return ok-empty (with a stashed empty patch handle) in
+            // that case; keep NOT_A_GIT_REPOSITORY for a real non-repo (issue #38, D36).
+            if (UnbornHeadProbe.isEmptyButInitialized(executor, dir, timeoutSeconds)) {
+                Handle emptyHandle = stash.stash("");
+                return Envelope.gitDiff(VERB, List.of(), emptyHandle);
+            }
             return Envelope.operationalError(VERB, ErrorCode.NOT_A_GIT_REPOSITORY,
                     "Path is not inside a git repository (git exited with code "
                             + numstatResult.exitCode() + ").",

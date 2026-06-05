@@ -96,18 +96,19 @@ class GitLogIntegrationTest {
     }
 
     @Test
-    void an_empty_repo_with_no_commits_returns_NOT_A_GIT_REPOSITORY(@TempDir Path tmp) {
-        // git init but no commits: git log exits non-zero on a repo with no commits
-        // (exit code 128 "does not have any commits yet"), which the exit-code floor
-        // surfaces as NOT_A_GIT_REPOSITORY.
+    void an_empty_repo_with_no_commits_returns_ok_with_empty_commits(@TempDir Path tmp) {
+        // git init but no commits: an unborn-HEAD repo IS a git repository — it simply
+        // has no commits yet. git log exits 128 ("does not have any commits yet"), but
+        // the unborn-HEAD discriminator detects this case and returns ok=true with an
+        // empty commits list instead of the misleading NOT_A_GIT_REPOSITORY.
         GitRepoFixture repo = GitRepoFixture.init(tmp);
 
         Envelope env = useCase().run(repo.dir().toString(), null, null);
 
-        // On a repo with no commits, git log exits non-zero → NOT_A_GIT_REPOSITORY.
-        // An empty commit list with ok=true is not achievable via the current exit-code floor.
-        assertThat(env.ok()).isFalse();
-        assertThat(env.error().code()).isEqualTo(ErrorCode.NOT_A_GIT_REPOSITORY);
+        assertThat(env.ok()).isTrue();
+        assertThat(env.verb()).isEqualTo("git_log");
+        assertThat(env.gitLog()).as("empty repo: commits list must be empty but not null")
+                .isNotNull().isEmpty();
     }
 
     @Test
