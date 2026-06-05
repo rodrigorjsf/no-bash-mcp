@@ -1,0 +1,20 @@
+[INFO] Scanning for projects...
+[INFO]
+[INFO] -------------------------< dev.nobash.fixture:fixture-compile-fail >-------------------------
+[INFO] Building fixture-compile-fail 0.0.1-SNAPSHOT
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO]
+[INFO] --- maven-compiler-plugin:3.11.0:testCompile (default-testCompile) ---
+[INFO] Changes detected - recompiling the module! :dependency
+[WARNING] /home/user/project/src/main/java/dev/example/Foo.java:[10,5] some deprecation warning
+[ERROR] /home/user/project/src/test/java/dev/example/FooTest.java:[15,9] cannot find symbol
+[ERROR] /home/user/project/src/test/java/dev/example/FooTest.java:[20,5] incompatible types: int cannot be converted to String
+[WARNING] /home/user/project/src/main/java/dev/example/Bar.java:[3,1] unchecked or unsafe operations
+[ERROR] COMPILATION ERROR :
+[INFO] 3 errors
+[INFO] 1 warning
+[ERROR] BUILD FAILURE
+[ERROR]
+[ERROR] For artifact {dev.nobash.fixture:fixture-compile-fail:0.0.1-SNAPSHOT:jar}:
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.11.0:testCompile
+[ERROR] -> [Help 1]

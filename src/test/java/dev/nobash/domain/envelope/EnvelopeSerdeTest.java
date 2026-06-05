@@ -1,6 +1,8 @@
 package dev.nobash.domain.envelope;
 
 import dev.nobash.domain.error.ErrorCode;
+import dev.nobash.domain.result.BuildSummary;
+import dev.nobash.domain.result.CompileDiagnostic;
 import dev.nobash.domain.result.ContainerFinding;
 import dev.nobash.domain.result.ContainerScope;
 import dev.nobash.domain.result.Finding;
@@ -23,6 +25,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * AC2 / D30 — the test-failure Envelope serializes {@code failures[]} with each element's
  * {@code "kind"} discriminator so the agent branches {@link TestFinding} vs
  * {@link ContainerFinding}; the success Envelope is counts-only (no {@code failures}, no report).
+ * Also proves the build-verb shapes (ADR-0009): {@code buildFailure} with {@code diagnostics[]}
+ * and {@code buildSuccess} with {@code buildSummary}.
  * Proven over micronaut-serde on the JVM with the real {@link ObjectMapper}.
  */
 @DisplayNameGeneration(DisplayNameGenerator.ReplaceUnderscores.class)
@@ -83,5 +87,63 @@ class EnvelopeSerdeTest {
         assertThat(json).contains("REPORT_NOT_PRODUCED");
         assertThat(json).contains("\"handle\"");
         assertThat(json).contains("run-xyz");
+    }
+
+    // ---- build verb serde (ADR-0009) ----
+
+    @Test
+    void a_build_failure_envelope_serializes_diagnostics_with_severity_and_no_failures() throws Exception {
+        List<CompileDiagnostic> diagnostics = List.of(
+                new CompileDiagnostic("/src/Foo.java", 10, 5, "ERROR", "cannot find symbol"),
+                new CompileDiagnostic("/src/Bar.java", 20, 1, "WARNING", "unchecked cast"));
+        BuildSummary buildSummary = new BuildSummary(1, 1);
+        Envelope env = Envelope.buildFailure("build", "mvn", buildSummary, diagnostics, null);
+
+        String json = mapper.writeValueAsString(env);
+
+        assertThat(json).contains("\"ok\":false");
+        assertThat(json).contains("\"untrusted\":true");
+        assertThat(json).contains("\"diagnostics\"");
+        assertThat(json).contains("\"severity\":\"ERROR\"");
+        assertThat(json).contains("\"severity\":\"WARNING\"");
+        assertThat(json).contains("\"buildSummary\"");
+        // failures must be absent (build compile-failure uses diagnostics[], not failures[])
+        assertThat(json).doesNotContain("\"failures\"");
+        assertThat(json).doesNotContain("\"kind\"");
+    }
+
+    @Test
+    void a_build_success_envelope_is_counts_only_with_no_diagnostics() throws Exception {
+        BuildSummary buildSummary = new BuildSummary(0, 3);
+        Envelope env = Envelope.buildSuccess("build", "mvn", buildSummary, null);
+
+        String json = mapper.writeValueAsString(env);
+
+        assertThat(json).contains("\"ok\":true");
+        assertThat(json).contains("\"buildSummary\"");
+        assertThat(json).contains("\"errors\":0");
+        assertThat(json).contains("\"warnings\":3");
+        // Counts-only: no diagnostics, no failures
+        assertThat(json).doesNotContain("\"diagnostics\"");
+        assertThat(json).doesNotContain("\"failures\"");
+    }
+
+    @Test
+    void build_failure_diagnostic_message_is_p9_neutralized() throws Exception {
+        // ANSI CSI escape sequence: ESC (U+001B) + "[31m" is standard red-foreground code.
+        // The OutboundNeutralizer must strip the ESC byte and its bracket sequence (CSI pattern).
+        char esc = (char) 0x1B;
+        String ansiMessage = esc + "[31mcannot find symbol" + esc + "[0m";
+        List<CompileDiagnostic> diagnostics = List.of(
+                new CompileDiagnostic("/src/Foo.java", 5, 1, "ERROR", ansiMessage));
+        BuildSummary buildSummary = new BuildSummary(1, 0);
+        Envelope env = Envelope.buildFailure("build", "mvn", buildSummary, diagnostics, null);
+
+        String json = mapper.writeValueAsString(env);
+
+        // Visible text must survive neutralization
+        assertThat(json).contains("cannot find symbol");
+        // The raw ESC byte must be absent from the serialized output
+        assertThat(json).doesNotContain(String.valueOf(esc));
     }
 }

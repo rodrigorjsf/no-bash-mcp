@@ -1,5 +1,6 @@
 package dev.nobash.adapter.in.mcp;
 
+import dev.nobash.application.verb.build.RunBuildUseCase;
 import dev.nobash.application.verb.tests.RunTestsUseCase;
 import dev.nobash.domain.envelope.Envelope;
 import io.micronaut.core.annotation.Nullable;
@@ -12,17 +13,22 @@ import java.util.List;
 /**
  * The inbound MCP adapter for build/test verbs (DESIGN.md §4). The {@code @Tool} bean IS the
  * adapter — there is no inbound port interface; transport (STDIO) is configuration. Discovery
- * is via compile-time DI. This slice exposes a single verb, {@code run_tests}, which delegates
- * to {@link RunTestsUseCase} and returns the result {@link Envelope} (success, test-failure, or
- * operational-error) as structured content over the JSON-RPC/STDIO channel.
+ * is via compile-time DI. This slice exposes two verbs:
+ * <ul>
+ *   <li>{@code run_tests} — delegates to {@link RunTestsUseCase}</li>
+ *   <li>{@code build} — delegates to {@link RunBuildUseCase} (ADR-0009)</li>
+ * </ul>
+ * Both return the result {@link Envelope} as structured content over the JSON-RPC/STDIO channel.
  */
 @Singleton
 public class BuildTools {
 
     private final RunTestsUseCase runTests;
+    private final RunBuildUseCase runBuild;
 
-    public BuildTools(RunTestsUseCase runTests) {
+    public BuildTools(RunTestsUseCase runTests, RunBuildUseCase runBuild) {
         this.runTests = runTests;
+        this.runBuild = runBuild;
     }
 
     /**
@@ -54,5 +60,28 @@ public class BuildTools {
             @ToolArg(name = "targetKind", description = "Optional target kind: CLASS or METHOD") @Nullable String targetKind,
             @ToolArg(name = "target", description = "Optional test identity: ClassName or ClassName#methodName") @Nullable String target) {
         return runTests.run(path, flags == null ? List.of() : flags, timeout, targetKind, target);
+    }
+
+    /**
+     * Compile the project via the detected manager ({@code mvn test-compile}) and return a
+     * structured result envelope. On a compile failure, the compiler diagnostics are parsed into
+     * {@code CompileDiagnostic{file, line, col, severity, message}} and returned in
+     * {@code diagnostics[]}. A successful build returns a minimal counts payload
+     * ({@code errors:0, warnings:N}) with no {@code diagnostics[]} noise (ADR-0009).
+     *
+     * <p>The full compiler output is retained behind the {@code handle} for {@code get_log}.
+     * {@code mvn} absent → operational error {@code TOOL_NOT_INSTALLED}.</p>
+     *
+     * @param path    the project directory; absent/blank fails closed to {@code INVALID_PATH}
+     * @param timeout optional timeout in seconds; clamped to the policy cap
+     * @return the result envelope (build-success, compile-failure, or operational-error)
+     */
+    @Tool(name = "build", description = "Compile a project via the detected manager and return a "
+            + "structured result envelope. Compile failures surface structured diagnostics[]. "
+            + "A successful build returns a minimal counts payload with no diagnostics noise.")
+    public Envelope build(
+            @ToolArg(name = "path", description = "Path to the project directory") @Nullable String path,
+            @ToolArg(name = "timeout", description = "Optional timeout in seconds") @Nullable Integer timeout) {
+        return runBuild.run(path, timeout);
     }
 }
