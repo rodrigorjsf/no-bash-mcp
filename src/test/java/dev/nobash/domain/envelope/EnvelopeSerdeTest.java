@@ -1,6 +1,8 @@
 package dev.nobash.domain.envelope;
 
 import dev.nobash.domain.error.ErrorCode;
+import dev.nobash.domain.git.GitCommit;
+import dev.nobash.domain.git.GitCommitDetail;
 import dev.nobash.domain.git.GitStatus;
 import dev.nobash.domain.git.GitStatusEntry;
 import dev.nobash.domain.result.BuildSummary;
@@ -222,5 +224,119 @@ class EnvelopeSerdeTest {
         assertThat(json).contains("\"staged\":[]");
         assertThat(json).contains("\"unstaged\":[]");
         assertThat(json).contains("\"untracked\":[]");
+    }
+
+    // ---- git_log verb serde (PRD-002, issue #26) ----
+
+    @Test
+    void a_git_log_envelope_serializes_the_commit_list_with_null_manager() throws Exception {
+        List<GitCommit> commits = List.of(
+                new GitCommit("abc1234567890abcdef1234567890abcdef123456", "abc1234",
+                        "Alice Smith", "2024-03-15T10:23:00+00:00", "feat: add widget"),
+                new GitCommit("def2345678901bcdef12345678901bcdef234567", "def2345",
+                        "Bob Jones", "2024-03-14T09:15:00+00:00", "fix: null pointer"));
+        Envelope env = Envelope.gitLog("git_log", commits);
+
+        String json = mapper.writeValueAsString(env);
+
+        assertThat(json).contains("\"ok\":true");
+        assertThat(json).contains("\"gitLog\"");
+        assertThat(json).contains("\"sha\":\"abc1234567890abcdef1234567890abcdef123456\"");
+        assertThat(json).contains("\"abbrev\":\"abc1234\"");
+        assertThat(json).contains("\"author\":\"Alice Smith\"");
+        assertThat(json).contains("\"dateIso\":\"2024-03-15T10:23:00+00:00\"");
+        assertThat(json).contains("\"subject\":\"feat: add widget\"");
+        assertThat(json).contains("\"untrusted\":true");
+        // manager is null for git verbs → omitted by serde.
+        assertThat(json).doesNotContain("\"manager\"");
+        // git_log carries no test/build/status payloads.
+        assertThat(json).doesNotContain("\"failures\"");
+        assertThat(json).doesNotContain("\"diagnostics\"");
+        assertThat(json).doesNotContain("\"gitStatus\"");
+        assertThat(json).doesNotContain("\"gitShow\"");
+    }
+
+    @Test
+    void a_git_log_envelope_neutralizes_repo_derived_author_and_subject() throws Exception {
+        char esc = (char) 0x1B;
+        String ansiAuthor = esc + "[31mEvil Author" + esc + "[0m";
+        String ansiSubject = esc + "[32mmalicious subject" + esc + "[0m";
+        List<GitCommit> commits = List.of(
+                new GitCommit("abc1234567890abcdef1234567890abcdef123456", "abc1234",
+                        ansiAuthor, "2024-03-15T10:23:00+00:00", ansiSubject));
+        Envelope env = Envelope.gitLog("git_log", commits);
+
+        String json = mapper.writeValueAsString(env);
+
+        assertThat(json).contains("Evil Author");
+        assertThat(json).contains("malicious subject");
+        assertThat(json).doesNotContain(String.valueOf(esc));
+    }
+
+    // ---- git_show verb serde (PRD-002, issue #26) ----
+
+    @Test
+    void a_git_show_envelope_serializes_commit_detail_and_handle() throws Exception {
+        GitCommitDetail detail = new GitCommitDetail(
+                "abc1234567890abcdef1234567890abcdef123456", "abc1234",
+                "Alice Smith", "2024-03-15T10:23:00+00:00",
+                "feat: add widget", "This is the body text.");
+        Handle handle = new Handle("diff-handle-xyz");
+        Envelope env = Envelope.gitShow("git_show", detail, handle);
+
+        String json = mapper.writeValueAsString(env);
+
+        assertThat(json).contains("\"ok\":true");
+        assertThat(json).contains("\"gitShow\"");
+        assertThat(json).contains("\"sha\":\"abc1234567890abcdef1234567890abcdef123456\"");
+        assertThat(json).contains("\"subject\":\"feat: add widget\"");
+        assertThat(json).contains("\"body\":\"This is the body text.\"");
+        assertThat(json).contains("\"handle\"");
+        assertThat(json).contains("\"diff-handle-xyz\"");
+        assertThat(json).contains("\"untrusted\":true");
+        // manager null → omitted.
+        assertThat(json).doesNotContain("\"manager\"");
+        // git_show carries no test/build/status payloads.
+        assertThat(json).doesNotContain("\"failures\"");
+        assertThat(json).doesNotContain("\"diagnostics\"");
+        assertThat(json).doesNotContain("\"gitStatus\"");
+        assertThat(json).doesNotContain("\"gitLog\"");
+    }
+
+    @Test
+    void a_git_show_envelope_with_null_body_omits_body_field() throws Exception {
+        // A commit with no body: micronaut-serde omits null fields by default, so
+        // "body" will not appear in the JSON at all (rather than "body":null).
+        GitCommitDetail detail = new GitCommitDetail(
+                "abc1234567890abcdef1234567890abcdef123456", "abc1234",
+                "Alice", "2024-03-15T10:23:00+00:00", "chore: tidy", null);
+        Envelope env = Envelope.gitShow("git_show", detail, null);
+
+        String json = mapper.writeValueAsString(env);
+
+        // subject is present; body is omitted when null (micronaut-serde null-omission).
+        assertThat(json).contains("\"subject\":\"chore: tidy\"");
+        assertThat(json).doesNotContain("\"body\"");
+        // No handle → no handle field in envelope.
+        assertThat(json).doesNotContain("\"handle\"");
+    }
+
+    @Test
+    void a_git_show_envelope_neutralizes_repo_derived_fields() throws Exception {
+        char esc = (char) 0x1B;
+        GitCommitDetail detail = new GitCommitDetail(
+                "abc1234567890abcdef1234567890abcdef123456", "abc1234",
+                esc + "[31mEvil" + esc + "[0m",
+                "2024-03-15T10:23:00+00:00",
+                esc + "[32mevil subject" + esc + "[0m",
+                esc + "[33mevil body" + esc + "[0m");
+        Envelope env = Envelope.gitShow("git_show", detail, null);
+
+        String json = mapper.writeValueAsString(env);
+
+        assertThat(json).contains("Evil");
+        assertThat(json).contains("evil subject");
+        assertThat(json).contains("evil body");
+        assertThat(json).doesNotContain(String.valueOf(esc));
     }
 }
