@@ -47,3 +47,10 @@ Traps surfaced during design, and why they are traps.
   — but a fresh 1.0.0 on a **Java 25** baseline is still young. Pin versions, watch for breaking
   changes, verify STDIO tool registration with the Micronaut-MCP spike, and **confirm GraalVM
   native-image supports JDK 25** in CI before relying on it.
+- **G16 — Micronaut Serde needs a *clean* build after a source change in a long-lived working tree.**
+  An incremental `mvn test` over a stale `target/` (e.g. right after a `git pull`/fast-forward in the
+  main repo) silently drops `@Serdeable` payload fields from serialized JSON → spurious failures:
+  `EnvelopeSerdeTest` went **11/14 RED** on `mvn -B test`, then **14/14 GREEN** (370/0 overall) on
+  `mvn -B clean test` against the **identical tree**. A fresh `git worktree` checkout has a clean
+  `target/`, so worktree-based gating (e.g. orchestrate) never hits it — only a reused working tree
+  does. **After a pull/merge, run `mvn clean test` before trusting serde-introspection results.**
