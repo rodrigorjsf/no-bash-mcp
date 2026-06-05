@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "no-bash-mcp": {
+      "command": "java",
+      "args": [
+        "-jar",
+        "/opt/no-bash-mcp/no-bash-mcp-0.1.0-SNAPSHOT.jar"
+      ]
+    }
+  }
+}
