@@ -34,4 +34,17 @@ The divergence-matrix tests also include a **hand-built `ContainerFinding` G5 gu
 asserting `NormalizedRun.ok()==false` for a synthetic container-only run. That single
 assertion is **carried verbatim from ADR-0007** ("the G5 container-only guard (case C) is
 asserted against a hand-built `ContainerFinding`") and is explicitly labelled as carried in
-the test. It is the ONLY non-captured artifact; every XML above is real.
+the test.
+
+## Synthetic compiler-output fixtures (labelled, issue #23 / ADR-0009)
+
+The following fixtures were **hand-authored** (synthetic/representative, NOT captured from a
+real `mvn` run) for the `CompileDiagnosticParser` unit tests. They represent the
+maven-compiler-plugin's structured console-output shape faithfully, but the content is
+constructed, not captured from a real compilation.
+
+| Fixture | Purpose | Origin |
+| --- | --- | --- |
+| `compiler-diagnostics-errors-and-warnings.txt` | Mixed ERROR/WARNING diagnostic lines plus Maven noise (BUILD FAILURE, COMPILATION ERROR) — proves noise filtering and coordinate parsing | **synthetic** |
+| `compiler-clean-build.txt` | Successful build output (BUILD SUCCESS, no diagnostics) | **synthetic** |
+| `compiler-noise-only.txt` | Only Maven noise `[ERROR]` lines without `[file:[line,col]]` shape — proves zero diagnostics when only noise present | **synthetic** |
