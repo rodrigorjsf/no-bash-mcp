@@ -140,6 +140,26 @@ class GitDiffIntegrationTest {
     }
 
     @Test
+    void git_diff_on_an_empty_repo_with_no_commits_returns_ok_with_empty_files_list(
+            @TempDir Path tmp) {
+        // git init but no commits: git diff HEAD exits 128 because HEAD does not resolve.
+        // An unborn-HEAD repo IS a valid git repository — it simply has no commits yet.
+        // The unborn-HEAD discriminator detects this case and returns ok=true with an empty
+        // gitDiff[] and a handle (consistent with the clean-tree contract).
+        GitRepoFixture repo = GitRepoFixture.init(tmp);
+
+        RawOutputStash stash = new RawOutputStash();
+        Envelope env = useCase(stash).run(repo.dir().toString(), null);
+
+        assertThat(env.ok()).isTrue();
+        assertThat(env.verb()).isEqualTo("git_diff");
+        assertThat(env.gitDiff())
+                .as("empty repo: gitDiff[] must be empty but not null")
+                .isNotNull().isEmpty();
+        assertThat(env.handle()).as("handle must be present even on an empty-repo diff").isNotNull();
+    }
+
+    @Test
     void git_diff_on_a_non_repo_directory_returns_NOT_A_GIT_REPOSITORY(@TempDir Path tmp) {
         Envelope env = useCase(sharedStash()).run(tmp.toString(), null);
 
