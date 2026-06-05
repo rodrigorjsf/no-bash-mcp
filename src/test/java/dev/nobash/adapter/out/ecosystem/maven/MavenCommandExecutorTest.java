@@ -1,5 +1,7 @@
 package dev.nobash.adapter.out.ecosystem.maven;
 
+import dev.nobash.adapter.out.ecosystem.ManagerPathResolver;
+import dev.nobash.adapter.out.ecosystem.PathScanningManagerResolver;
 import dev.nobash.domain.port.out.ExecResult;
 import dev.nobash.domain.port.out.ExecSpec;
 import org.junit.jupiter.api.DisplayNameGeneration;

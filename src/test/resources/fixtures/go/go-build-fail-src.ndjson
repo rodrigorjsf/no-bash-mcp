@@ -1,0 +1,6 @@
+{"ImportPath":"nbm/gofail/brokensrc [nbm/gofail/brokensrc.test]","Action":"build-output","Output":"# nbm/gofail/brokensrc [nbm/gofail/brokensrc.test]\n"}
+{"ImportPath":"nbm/gofail/brokensrc [nbm/gofail/brokensrc.test]","Action":"build-output","Output":"brokensrc/brokensrc.go:5:9: cannot use \"not an int\" (untyped string constant) as int value in return statement\n"}
+{"ImportPath":"nbm/gofail/brokensrc [nbm/gofail/brokensrc.test]","Action":"build-fail"}
+{"Time":"2026-06-05T16:19:08.877337387-03:00","Action":"start","Package":"nbm/gofail/brokensrc"}
+{"Time":"2026-06-05T16:19:08.877401288-03:00","Action":"output","Package":"nbm/gofail/brokensrc","Output":"FAIL\tnbm/gofail/brokensrc [build failed]\n"}
+{"Time":"2026-06-05T16:19:08.877430489-03:00","Action":"fail","Package":"nbm/gofail/brokensrc","Elapsed":0,"FailedBuild":"nbm/gofail/brokensrc [nbm/gofail/brokensrc.test]"}

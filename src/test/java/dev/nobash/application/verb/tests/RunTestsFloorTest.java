@@ -112,7 +112,10 @@ class RunTestsFloorTest {
     }
 
     private static RunTestsUseCase useCaseWith(ExecResult result, RunInterpretation interpretation) {
-        return new RunTestsUseCase(new FakePort(result), new FakeEcosystemAdapter(interpretation),
+        // Single-adapter list (the fake) so selection always resolves to one — these tests encode
+        // the D27/D28/D29 anti-false-green floor in the use-case, never AMBIGUOUS_SCOPE.
+        return new RunTestsUseCase(new FakePort(result),
+                java.util.List.of(new FakeEcosystemAdapter(interpretation)),
                 new TestsFlagPolicy(), new RawOutputStash(), new ModuleLock());
     }
 
