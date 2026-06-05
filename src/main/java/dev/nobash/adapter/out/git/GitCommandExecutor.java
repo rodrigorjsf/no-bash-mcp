@@ -1,9 +1,10 @@
-package dev.nobash.adapter.out.ecosystem.maven;
+package dev.nobash.adapter.out.git;
 
+import dev.nobash.adapter.out.ecosystem.maven.ManagerPathResolver;
 import dev.nobash.domain.port.out.CommandExecutorPort;
 import dev.nobash.domain.port.out.ExecResult;
 import dev.nobash.domain.port.out.ExecSpec;
-import io.micronaut.context.annotation.Primary;
+import jakarta.inject.Named;
 import jakarta.inject.Singleton;
 
 import java.io.IOException;
@@ -20,51 +21,37 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
- * The Maven ecosystem adapter (outbound). Satisfies {@link CommandExecutorPort} for the JVM/
- * Maven ecosystem. It (a) reports whether the trusted system {@code mvn} is installed on PATH
- * via the injected {@link ManagerPathResolver} seam, and (b) launches a command by spawning the
- * explicit {@code argv} array directly.
+ * The git ecosystem adapter (outbound) — the FOUNDATIONAL git seam (PRD-002, issue #24).
+ * Satisfies {@link CommandExecutorPort} for the trusted system {@code git}. It (a) reports
+ * whether {@code git} is installed on PATH via the shared {@link ManagerPathResolver} seam
+ * (reused from the Maven adapter — same Adapter layer, ArchUnit-clean), and (b) launches a
+ * command by spawning the explicit {@code argv} array directly.
  *
- * <p>Execution launches {@code new ProcessBuilder(spec.argv())} — the argv array is passed
- * verbatim, NEVER through {@code /bin/sh -c} and never re-split, so shell metacharacters in any
- * token are inert (security-model.md). {@code argv[0]} is the trusted system {@code mvn} name
- * resolved on {@code PATH} by the OS — never a repo wrapper ({@code ./mvnw}), per ADR-0008. The
- * launcher stays outside the agent's control.</p>
+ * <p><b>DI qualifier (PRD-002).</b> There are now two {@link CommandExecutorPort} beans. The
+ * Maven adapter is {@code @Primary} (resolves bare injections), so this git adapter carries the
+ * {@code @Named("git")} qualifier; the git use-case injects it explicitly via
+ * {@code @Named("git")}. This keeps {@code RunTestsUseCase} / {@code RunBuildUseCase} resolving
+ * Maven with ZERO edits.</p>
  *
- * <p>Timeout enforcement (issue #6): the calling thread does a BOUNDED
- * {@code process.waitFor(spec.timeoutSeconds(), SECONDS)}. On expiry it snapshots the live
- * descendants BEFORE killing the parent (once the parent dies its descendants reparent to init
- * and {@code descendants()} no longer finds them — the classic tree-kill bug), {@code
- * destroyForcibly()}-s the parent then every snapshotted descendant, drains whatever partial
- * output the pipes EOF after the tree is reaped, and returns a {@code timedOut=true} result.</p>
- *
- * <p>Both stdout AND stderr are drained on worker threads (NOT one on the calling thread): a
- * hung child that never EOFs would otherwise block a calling-thread drain forever and the
- * timeout could never fire. Draining both off-thread keeps the bounded {@code waitFor} the only
- * thing the calling thread blocks on, so the deadline is always honoured.</p>
- *
- * <p><b>DI primary (PRD-002).</b> {@link CommandExecutorPort} now has two implementations: this
- * Maven adapter and the git adapter ({@code adapter/out/git}). This bean is {@link Primary} so a
- * bare {@code CommandExecutorPort} injection (the existing {@code RunTestsUseCase} /
- * {@code RunBuildUseCase} ecosystem use-cases) resolves to Maven unchanged — no qualifier edits
- * to those callers. The git use-case opts in explicitly via {@code @Named("git")}.</p>
+ * <p>Execution mirrors {@code MavenCommandExecutor}: {@code new ProcessBuilder(spec.argv())} —
+ * the argv array passed verbatim, NEVER through {@code /bin/sh -c} and never re-split, so shell
+ * metacharacters in any token are inert (security-model.md). {@code argv[0]} is the trusted
+ * system {@code git} name resolved on {@code PATH} by the OS — never a repo wrapper (ADR-0008).
+ * Both pipes drain on worker threads and the calling thread blocks only on the bounded
+ * {@code waitFor}, so the deadline is always honoured (issue #6).</p>
  */
 @Singleton
-@Primary
-public class MavenCommandExecutor implements CommandExecutorPort {
+@Named("git")
+public class GitCommandExecutor implements CommandExecutorPort {
 
-    private static final String MANAGER = "mvn";
+    private static final String MANAGER = "git";
 
-    /**
-     * Bounded grace to collect the drained partial output AFTER the tree is killed. The pipes
-     * EOF once every fd-holder is reaped; this cap guarantees a stuck drain can never re-hang
-     * the executor past the deadline it just enforced.
-     */
+    /** Bounded grace to collect drained partial output AFTER the tree is killed (mirror Maven). */
     private static final long DRAIN_GRACE_SECONDS = 5;
 
     private final ManagerPathResolver resolver;
 
-    public MavenCommandExecutor(ManagerPathResolver resolver) {
+    public GitCommandExecutor(ManagerPathResolver resolver) {
         this.resolver = resolver;
     }
 
@@ -76,8 +63,7 @@ public class MavenCommandExecutor implements CommandExecutorPort {
     @Override
     public ExecResult execute(ExecSpec spec) {
         ProcessBuilder pb = toProcessBuilder(spec);
-        // BOTH pipes drain on workers so the calling thread blocks ONLY on the bounded waitFor —
-        // a calling-thread drain on a hung child would never EOF and the timeout could not fire.
+        // BOTH pipes drain on workers so the calling thread blocks ONLY on the bounded waitFor.
         ExecutorService pool = Executors.newFixedThreadPool(2);
         try {
             Process process = pb.start();
@@ -86,7 +72,6 @@ public class MavenCommandExecutor implements CommandExecutorPort {
 
             boolean exited = process.waitFor(spec.timeoutSeconds(), TimeUnit.SECONDS);
             if (!exited) {
-                // Deadline expired — kill the WHOLE tree and return the partial signal.
                 String partialStdout = killTreeAndDrain(process, stdoutFuture);
                 String partialStderr = drainQuietly(stderrFuture);
                 return new ExecResult(-1, partialStdout, partialStderr, true);
@@ -109,11 +94,9 @@ public class MavenCommandExecutor implements CommandExecutorPort {
     }
 
     /**
-     * Kill the process tree on a timeout and collect the stdout that drains once the tree is
-     * reaped. Snapshots the descendants BEFORE destroying the parent (a dead parent's children
-     * reparent to init and are no longer enumerable), then forcibly destroys the parent and every
-     * snapshotted descendant. A grandchild holding an inherited stdout fd keeps the pipe open
-     * until it too is killed, so the drain is collected AFTER the kill, under a bounded grace.
+     * Kill the process tree on a timeout and collect the stdout that drains once it is reaped.
+     * Snapshots descendants BEFORE destroying the parent (a dead parent's children reparent to
+     * init and are no longer enumerable), then forcibly destroys the parent and each descendant.
      */
     private static String killTreeAndDrain(Process process, Future<String> stdoutFuture) {
         List<ProcessHandle> descendants = process.descendants().toList();
@@ -124,11 +107,7 @@ public class MavenCommandExecutor implements CommandExecutorPort {
         return drainQuietly(stdoutFuture);
     }
 
-    /**
-     * Collect a drain future's captured output under a bounded grace, never re-hanging past the
-     * deadline. A timed-out or interrupted drain yields {@code ""} (the partial output is
-     * best-effort on a kill path).
-     */
+    /** Collect a drain future's captured output under a bounded grace, never re-hanging. */
     private static String drainQuietly(Future<String> future) {
         try {
             return future.get(DRAIN_GRACE_SECONDS, TimeUnit.SECONDS);
@@ -143,7 +122,7 @@ public class MavenCommandExecutor implements CommandExecutorPort {
     /**
      * Build the {@link ProcessBuilder} for a spec. The command is EXACTLY {@code spec.argv()}
      * (no shell wrapping); the working directory is set when present. Package-visible so a unit
-     * can assert the launched command shape (AC9) without spawning a process.
+     * can assert the launched command shape without spawning a process.
      */
     ProcessBuilder toProcessBuilder(ExecSpec spec) {
         ProcessBuilder pb = new ProcessBuilder(spec.argv());

@@ -57,5 +57,14 @@ public enum ErrorCode {
      * target missing the required {@code ClassName#methodName} separator). Type validation is a
      * pre-exec guard — NO process is launched for an invalid target (issue #9, AC4).
      */
-    INVALID_TARGET
+    INVALID_TARGET,
+
+    /**
+     * A git verb ran against a path that exists and is a directory, but is NOT inside a git
+     * working tree — {@code git} exits non-zero (typically 128) with "not a git repository"
+     * (PRD-002, issue #24). The exit-code floor surfaces this rather than letting the porcelain
+     * parser turn empty/garbage stdout into a misleading "clean repo" (false-green). The hint
+     * points the agent at running the verb from inside a checked-out repository.
+     */
+    NOT_A_GIT_REPOSITORY
 }

@@ -89,6 +89,23 @@ class ArchitectureTest {
     }
 
     @Test
+    void the_git_domain_is_io_free() {
+        // PRD-002 (issue #24) — the pure git-status parser must do NO directory read, NO file
+        // read, and launch NO process; porcelain output arrives already in memory (exactly like
+        // the result-domain rule). This makes the porcelain-parse keystone VERIFIABLE: the parser
+        // consumes git's machine-format stdout, never scrapes the filesystem or spawns git itself.
+        ArchRule rule = noClasses()
+                .that().resideInAPackage(BASE + ".domain.git..")
+                .should().dependOnClassesThat().resideInAnyPackage("java.nio.file..")
+                .orShould().dependOnClassesThat().haveFullyQualifiedName("java.io.File")
+                .orShould().dependOnClassesThat().haveFullyQualifiedName("java.lang.Process")
+                .orShould().dependOnClassesThat().haveFullyQualifiedName("java.lang.ProcessBuilder")
+                .allowEmptyShould(true);
+
+        rule.check(productionClasses);
+    }
+
+    @Test
     void the_layered_dependency_rule_holds() {
         // Only layers that have classes in THIS slice are declared (no empty infra/config
         // layers pre-declared). domain is the innermost; adapter the outermost.

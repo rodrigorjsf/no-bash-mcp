@@ -1,6 +1,8 @@
 package dev.nobash.domain.envelope;
 
 import dev.nobash.domain.error.ErrorCode;
+import dev.nobash.domain.git.GitStatus;
+import dev.nobash.domain.git.GitStatusEntry;
 import dev.nobash.domain.result.BuildSummary;
 import dev.nobash.domain.result.CompileDiagnostic;
 import dev.nobash.domain.result.ContainerFinding;
@@ -145,5 +147,80 @@ class EnvelopeSerdeTest {
         assertThat(json).contains("cannot find symbol");
         // The raw ESC byte must be absent from the serialized output
         assertThat(json).doesNotContain(String.valueOf(esc));
+    }
+
+    // ---- git_status verb serde (PRD-002) ----
+
+    @Test
+    void a_git_status_envelope_serializes_the_git_status_shape_with_null_manager() throws Exception {
+        GitStatus status = new GitStatus("main", false, "origin/main", 1, 0,
+                List.of(GitStatusEntry.of("src/staged.txt", "M.")),
+                List.of(GitStatusEntry.of("src/unstaged.txt", ".M")),
+                List.of(GitStatusEntry.of("untracked.txt", "?")));
+        Envelope env = Envelope.gitStatus("git_status", status, null);
+
+        String json = mapper.writeValueAsString(env);
+
+        assertThat(json).contains("\"ok\":true");
+        assertThat(json).contains("\"gitStatus\"");
+        assertThat(json).contains("\"branch\":\"main\"");
+        assertThat(json).contains("\"upstream\":\"origin/main\"");
+        assertThat(json).contains("\"ahead\":1");
+        assertThat(json).contains("\"staged\"");
+        assertThat(json).contains("\"unstaged\"");
+        assertThat(json).contains("\"untracked\"");
+        // manager is null for git verbs → omitted by serde (null-omission).
+        assertThat(json).doesNotContain("\"manager\"");
+        // git_status carries no test/build payloads.
+        assertThat(json).doesNotContain("\"failures\"");
+        assertThat(json).doesNotContain("\"diagnostics\"");
+        assertThat(json).doesNotContain("\"summary\"");
+        assertThat(json).doesNotContain("\"buildSummary\"");
+    }
+
+    @Test
+    void a_git_status_envelope_is_marked_untrusted_and_neutralizes_repo_derived_paths()
+            throws Exception {
+        // A branch name and a path carrying an ANSI escape — both repo-derived and must be
+        // neutralized; the envelope must be flagged untrusted.
+        char esc = (char) 0x1B;
+        String ansiBranch = esc + "[31mmain" + esc + "[0m";
+        String ansiPath = esc + "[32mevil.txt" + esc + "[0m";
+        GitStatus status = new GitStatus(ansiBranch, false, null, null, null,
+                List.of(),
+                List.of(),
+                List.of(GitStatusEntry.of(ansiPath, "?")));
+        Envelope env = Envelope.gitStatus("git_status", status, null);
+
+        String json = mapper.writeValueAsString(env);
+
+        assertThat(json).contains("\"untrusted\":true");
+        // Visible text survives neutralization; the raw ESC byte is stripped.
+        assertThat(json).contains("main");
+        assertThat(json).contains("evil.txt");
+        assertThat(json).doesNotContain(String.valueOf(esc));
+    }
+
+    @Test
+    void a_clean_git_status_envelope_serializes_null_ahead_behind_and_upstream_as_null()
+            throws Exception {
+        // No-upstream repo: upstream/ahead/behind are null. Nested-record null fields are
+        // serialized explicitly as null by micronaut-serde (the top-level Envelope omits its own
+        // nulls via @JsonSchema, but the nested GitStatus emits null members) — the agent sees an
+        // unambiguous null rather than a misleading default, which is the contract that matters.
+        GitStatus status = new GitStatus("feature", false, null, null, null,
+                List.of(), List.of(), List.of());
+        Envelope env = Envelope.gitStatus("git_status", status, null);
+
+        String json = mapper.writeValueAsString(env);
+
+        assertThat(json).contains("\"branch\":\"feature\"");
+        assertThat(json).contains("\"upstream\":null");
+        assertThat(json).contains("\"ahead\":null");
+        assertThat(json).contains("\"behind\":null");
+        // The empty buckets serialize as empty arrays (stable shape), never null.
+        assertThat(json).contains("\"staged\":[]");
+        assertThat(json).contains("\"unstaged\":[]");
+        assertThat(json).contains("\"untracked\":[]");
     }
 }
