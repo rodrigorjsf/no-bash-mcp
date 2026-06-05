@@ -1,0 +1,6 @@
+{"ImportPath":"nbm/gofail/brokentest [nbm/gofail/brokentest.test]","Action":"build-output","Output":"# nbm/gofail/brokentest [nbm/gofail/brokentest.test]\n"}
+{"ImportPath":"nbm/gofail/brokentest [nbm/gofail/brokentest.test]","Action":"build-output","Output":"brokentest/brokentest_test.go:7:9: undefined: undefinedSymbol\n"}
+{"ImportPath":"nbm/gofail/brokentest [nbm/gofail/brokentest.test]","Action":"build-fail"}
+{"Time":"2026-06-05T16:19:09.901188869-03:00","Action":"start","Package":"nbm/gofail/brokentest"}
+{"Time":"2026-06-05T16:19:09.90122187-03:00","Action":"output","Package":"nbm/gofail/brokentest","Output":"FAIL\tnbm/gofail/brokentest [build failed]\n"}
+{"Time":"2026-06-05T16:19:09.90122747-03:00","Action":"fail","Package":"nbm/gofail/brokentest","Elapsed":0,"FailedBuild":"nbm/gofail/brokentest [nbm/gofail/brokentest.test]"}

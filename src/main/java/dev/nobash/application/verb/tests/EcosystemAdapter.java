@@ -14,10 +14,11 @@ import java.util.List;
  * it holds zero manager-specific constants or types and delegates every ecosystem-specific
  * decision through this interface.
  *
- * <p><b>Scope (PRD-3, slice 1).</b> Maven is the SOLE implementation in this slice — a pure,
- * behaviour-preserving extraction. There is no {@code AMBIGUOUS_SCOPE} branch, no multi-ecosystem
- * dispatch, and no Node/Go adapter yet; those are downstream slices. With a single adapter the
- * use-case need not branch on {@link #detects(Path)}.</p>
+ * <p><b>Scope (PRD-3, slice 2).</b> Two implementations now exist — Maven and Go — so the
+ * use-case selects among EVERY injected adapter by {@link #detects(Path)}: 0 match →
+ * {@code NO_MANAGER_DETECTED}, exactly 1 → that adapter runs, ≥2 → {@code AMBIGUOUS_SCOPE}
+ * (fail-closed). Each adapter detects its own marker ({@code pom.xml} / {@code go.mod}) and is a
+ * {@code @Singleton}; Micronaut collection-injects the full set into the use-case.</p>
  *
  * <p>The seam lives in the application layer (beside the use-case) — NOT the domain — because
  * {@link #buildExec} references {@link TestTarget}, which is an application type; placing it in

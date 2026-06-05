@@ -2,8 +2,8 @@ package dev.nobash.domain.error;
 
 /**
  * The enumerated operational-error codes this slice can return (CONTEXT.md "Operational
- * error"). The remaining catalog ({@code DEPS_NOT_INSTALLED}, {@code AMBIGUOUS_SCOPE}, …)
- * arrives with the slices that earn those codes.
+ * error"). The remaining catalog ({@code DEPS_NOT_INSTALLED}, …) arrives with the slices that
+ * earn those codes.
  *
  * <p>An operational error is a failure of the <em>operation itself</em> — distinct from a
  * test failure — so the agent branches deterministically on {@code code}.</p>
@@ -13,10 +13,20 @@ public enum ErrorCode {
     /** The path is missing or is not a directory. Makes NO workspace-confinement claim. */
     INVALID_PATH,
 
-    /** No manager marker ({@code pom.xml}) was found at the path. */
+    /** No manager marker ({@code pom.xml}, {@code go.mod}, …) was found at the path. */
     NO_MANAGER_DETECTED,
 
-    /** The trusted system manager ({@code mvn}) is not installed on {@code PATH}. */
+    /**
+     * MORE THAN ONE ecosystem matched the same path — e.g. a directory carrying both a
+     * {@code pom.xml} and a {@code go.mod} (a polyglot monorepo root). The selection is
+     * ambiguous, so {@code run_tests} fails closed rather than guessing which manager to run
+     * (ADR-0011, PRD-3 slice 2). The hint tells the agent to re-run against the specific
+     * sub-project path whose single ecosystem it wants exercised. Distinct from
+     * {@link #NO_MANAGER_DETECTED} (zero matched) — here two or more matched.
+     */
+    AMBIGUOUS_SCOPE,
+
+    /** The trusted system manager ({@code mvn}, {@code go}, …) is not installed on {@code PATH}. */
     TOOL_NOT_INSTALLED,
 
     /**

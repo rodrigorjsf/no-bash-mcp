@@ -19,13 +19,20 @@ import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * The {@code run_tests} use-case (verb slice). It validates the request, runs the programmatic
  * security guards <strong>before any process is launched</strong> (DESIGN.md §9), then
  * orchestrates the full execution tracer. It is <strong>ecosystem-agnostic</strong> (ADR-0011):
  * the use-case owns the INVARIANT spine and delegates everything that VARIES per ecosystem to the
- * injected {@link EcosystemAdapter} (Maven is the sole adapter in this slice).
+ * selected {@link EcosystemAdapter}. With more than one adapter registered (Maven + Go from
+ * PRD-3 slice 2) it owns the SELECTION too: it asks every injected adapter whether it
+ * {@link EcosystemAdapter#detects(Path) detects} the path and dispatches on the count — 0 match →
+ * {@code NO_MANAGER_DETECTED}, exactly 1 → that adapter runs, ≥2 → {@code AMBIGUOUS_SCOPE}
+ * (fail-closed, hint to pass the sub-project path). The selection holds zero ecosystem literals:
+ * the use-case names only the {@link EcosystemAdapter} abstraction, never a concrete adapter
+ * (ArchUnit-enforced).
  *
  * <p>The INVARIANT spine the use-case keeps, single-source for every ecosystem: the pre-exec
  * guards, the per-module lock (ADR-0005/D22), the timeout intercept + process-tree kill (issue #6),
@@ -35,9 +42,11 @@ import java.util.List;
  * installed-check, the argv + reporter injection, the report source, normalization, and the
  * report-absence decision.</p>
  *
- * <p>Guard order is fixed and fail-closed: {@code INVALID_PATH} → {@code NO_MANAGER_DETECTED} →
- * {@code TOOL_NOT_INSTALLED} → {@code INVALID_TARGET} → {@code RESOURCE_BUSY}. The adapter's
- * installed-check (which consults the executor seam) is reached ONLY once the earlier guards pass.</p>
+ * <p>Guard order is fixed and fail-closed: {@code INVALID_PATH} →
+ * ({@code NO_MANAGER_DETECTED} | {@code AMBIGUOUS_SCOPE}) → {@code TOOL_NOT_INSTALLED} →
+ * {@code INVALID_TARGET} → {@code RESOURCE_BUSY}. The adapter's installed-check (which consults the
+ * executor seam) is reached ONLY once selection resolves to exactly one adapter and the earlier
+ * guards pass.</p>
  *
  * <p>After exec, the outcome is decided in this fixed precedence (the order is load-bearing — see
  * the container-only case below):</p>
@@ -47,13 +56,15 @@ import java.util.List;
  *       mislabelled {@code REPORT_NOT_PRODUCED} (issue #6).</li>
  *   <li><b>report-absent</b> (e.g. Maven's empty fresh dir) ⇒ stash the adapter-supplied raw
  *       payload behind a {@link Handle} and return the adapter-supplied operational error
- *       (Maven: {@code REPORT_NOT_PRODUCED}, D25/D27).</li>
+ *       (Maven: {@code REPORT_NOT_PRODUCED}, D25/D27). Go never takes this branch — a Go
+ *       build-fail folds INTO the graph as a {@code ContainerFinding(PACKAGE, ERRORED)}.</li>
  *   <li>else normalize; {@code executedTests = passed + failed + errored} (excludes
  *       {@code SKIPPED}, D29). If {@code executedTests == 0} <em>and the run is otherwise green</em>
  *       ({@code run.ok()}) ⇒ {@code NO_TESTS_RUN} (D29). The {@code run.ok()} guard is essential: a
- *       container-only run (a {@code @BeforeAll} throw) also has {@code executedTests == 0} but is
- *       NOT ok, so it must fall through to a test-failure envelope carrying the container finding
- *       (AC8 / the G5 keystone), never {@code NO_TESTS_RUN}.</li>
+ *       container-only run (a {@code @BeforeAll} throw, a Go build-fail) also has
+ *       {@code executedTests == 0} but is NOT ok, so it must fall through to a test-failure
+ *       envelope carrying the container finding (AC8 / the G5 keystone), never
+ *       {@code NO_TESTS_RUN}.</li>
  *   <li>else {@code ok = run.ok() && exitCode == 0 && !timedOut && executedTests > 0} (the
  *       application-layer floor; the frozen domain {@link NormalizedRun#ok()} stays findings-only).
  *       {@code ok} ⇒ counts-only success; otherwise a test-failure envelope carrying
@@ -66,15 +77,24 @@ public class RunTestsUseCase {
     private static final String VERB = "run_tests";
 
     private final CommandExecutorPort executor;
-    private final EcosystemAdapter ecosystem;
+    private final List<EcosystemAdapter> ecosystems;
     private final TestsFlagPolicy flagPolicy;
     private final RawOutputStash stash;
     private final ModuleLock moduleLock;
 
-    public RunTestsUseCase(CommandExecutorPort executor, EcosystemAdapter ecosystem,
+    /**
+     * @param executor   the format-blind executor seam (shared with build/git; @Primary → Maven)
+     * @param ecosystems EVERY registered {@link EcosystemAdapter} bean (Micronaut collection
+     *                   injection wires one element per @Singleton adapter — Maven, Go, …); the
+     *                   use-case selects among them by {@link EcosystemAdapter#detects(Path)}
+     * @param flagPolicy the per-operation flag allowlist
+     * @param stash      the run-cache stash (D17)
+     * @param moduleLock the per-module mutating lock (ADR-0005/D22)
+     */
+    public RunTestsUseCase(CommandExecutorPort executor, List<EcosystemAdapter> ecosystems,
                            TestsFlagPolicy flagPolicy, RawOutputStash stash, ModuleLock moduleLock) {
         this.executor = executor;
-        this.ecosystem = ecosystem;
+        this.ecosystems = List.copyOf(ecosystems);
         this.flagPolicy = flagPolicy;
         this.stash = stash;
         this.moduleLock = moduleLock;
@@ -101,11 +121,11 @@ public class RunTestsUseCase {
      * {@code -Dtest=<value>} into the argv as a controlled value — exactly like the
      * report-directory injection.
      *
-     * <p>Guard order: {@code INVALID_PATH} → {@code NO_MANAGER_DETECTED} → {@code TOOL_NOT_INSTALLED}
-     * → {@code INVALID_TARGET} → {@code RESOURCE_BUSY}. The target guard fires BEFORE the lock
-     * is acquired, so a malformed target never blocks a concurrent run. The {@code RESOURCE_BUSY}
-     * key is {@code realpath(moduleDir)} regardless of the target — different targets on the same
-     * module still collide (D22, ADR-0005).</p>
+     * <p>Guard order: {@code INVALID_PATH} → ({@code NO_MANAGER_DETECTED} | {@code AMBIGUOUS_SCOPE})
+     * → {@code TOOL_NOT_INSTALLED} → {@code INVALID_TARGET} → {@code RESOURCE_BUSY}. The target
+     * guard fires BEFORE the lock is acquired, so a malformed target never blocks a concurrent run.
+     * The {@code RESOURCE_BUSY} key is {@code realpath(moduleDir)} regardless of the target —
+     * different targets on the same module still collide (D22, ADR-0005).</p>
      *
      * @param path        the project directory (optional at the wire; null fails closed)
      * @param flags       agent-supplied flags (untrusted; vetted by the allowlist)
@@ -136,16 +156,38 @@ public class RunTestsUseCase {
                     "Pass the path to an existing project directory.");
         }
 
-        // Guard 2 — NO_MANAGER_DETECTED. The adapter owns marker detection (Maven: pom.xml).
-        if (!ecosystem.detects(dir)) {
-            String marker = ecosystem.markerDescription();
+        // Guard 2 — selection over EVERY registered adapter (ADR-0011, PRD-3 slice 2). Each adapter
+        // owns its own marker detection (Maven: pom.xml; Go: go.mod). Dispatch on the match count:
+        //   0  → NO_MANAGER_DETECTED (no supported ecosystem here)
+        //   ≥2 → AMBIGUOUS_SCOPE (a polyglot root; fail closed, hint to pass the sub-project path)
+        //   1  → that adapter is THE ecosystem for the rest of the run.
+        // Fail-closed by construction: a guess is never made when two ecosystems both match.
+        List<EcosystemAdapter> matched = ecosystems.stream()
+                .filter(a -> a.detects(dir))
+                .toList();
+        if (matched.isEmpty()) {
+            String markers = ecosystems.stream()
+                    .map(EcosystemAdapter::markerDescription)
+                    .collect(Collectors.joining(", "));
             return Envelope.operationalError(VERB, ErrorCode.NO_MANAGER_DETECTED,
-                    "No supported manager was detected at '" + path + "' (looked for: " + marker + ").",
-                    "Run run_tests from a directory that contains a " + marker + ".");
+                    "No supported manager was detected at '" + path + "' (looked for: " + markers + ").",
+                    "Run run_tests from a directory that contains one of: " + markers + ".");
         }
+        if (matched.size() > 1) {
+            String markers = matched.stream()
+                    .map(EcosystemAdapter::markerDescription)
+                    .collect(Collectors.joining(", "));
+            return Envelope.operationalError(VERB, ErrorCode.AMBIGUOUS_SCOPE,
+                    "More than one ecosystem was detected at '" + path + "' (matched: " + markers
+                            + "). run_tests will not guess which manager to run.",
+                    "Pass the sub-project path whose single ecosystem you want to test "
+                            + "(the directory containing just one of: " + markers + ").");
+        }
+        EcosystemAdapter ecosystem = matched.get(0);
 
         // Guard 3 — TOOL_NOT_INSTALLED. The adapter resolves the trusted system launcher on PATH
-        // (ADR-0008); Maven delegates the check to the format-blind executor seam.
+        // (ADR-0008); Maven delegates the check to the format-blind executor seam, Go consults the
+        // generic ManagerPathResolver for `go`.
         if (!ecosystem.isInstalled()) {
             String manager = ecosystem.managerBinary();
             return Envelope.operationalError(VERB, ErrorCode.TOOL_NOT_INSTALLED,
@@ -153,8 +195,8 @@ public class RunTestsUseCase {
                     "Install " + manager + " and ensure it is on the system PATH.");
         }
 
-        // Preflight (DEPS_NOT_INSTALLED) is a Node concern (D21) and lands in slice 2; the Maven
-        // adapter has no deps to check before exec (deps resolve on demand from ~/.m2). Omitted here.
+        // Preflight (DEPS_NOT_INSTALLED) is a Node concern (D21) and lands in a later slice; neither
+        // the Maven nor the Go adapter has deps to check before exec here. Omitted.
 
         // Guard 4 — INVALID_TARGET. Validate the structured target selector BEFORE acquiring the
         // lock: a malformed target never blocks a concurrent run on the same module. The validation
@@ -191,7 +233,7 @@ public class RunTestsUseCase {
         // The lock is released on EVERY exit path (success, test-failure, TIMEOUT, REPORT_NOT_PRODUCED,
         // NO_TESTS_RUN, and any thrown exception) by the finally below.
         try {
-            return runLocked(dir, flags, timeout, target);
+            return runLocked(ecosystem, dir, flags, timeout, target);
         } finally {
             try {
                 moduleLock.release(dir);
@@ -202,15 +244,16 @@ public class RunTestsUseCase {
     }
 
     /**
-     * The locked execution body: ask the adapter to build the plan (with the clamped timeout),
-     * launch the trusted manager via the executor seam, then run the INVARIANT post-exec spine
-     * over the adapter's interpretation. Runs only while this verb holds the module lock; the
+     * The locked execution body: ask the SELECTED adapter to build the plan (with the clamped
+     * timeout), launch the trusted manager via the executor seam, then run the INVARIANT post-exec
+     * spine over the adapter's interpretation. Runs only while this verb holds the module lock; the
      * caller's {@code finally} releases the lock on every exit path.
      *
-     * @param target the validated structured target selector, or {@code null} for a full-suite run
+     * @param ecosystem the single adapter selection resolved to (never null)
+     * @param target    the validated structured target selector, or {@code null} for a full-suite run
      */
-    private Envelope runLocked(Path dir, List<String> flags, Integer timeout,
-                                @Nullable TestTarget target) {
+    private Envelope runLocked(EcosystemAdapter ecosystem, Path dir, List<String> flags,
+                               Integer timeout, @Nullable TestTarget target) {
         // Argv vetting drops every agent flag outside the allowlist; the adapter then injects the
         // MCP-controlled report-directory flag (and any -Dtest= selector) and allocates the fresh,
         // empty-before-exec report source (report freshness by construction, D27).
@@ -222,7 +265,7 @@ public class RunTestsUseCase {
 
         // Launch the planned spec through the format-blind executor seam — part of the invariant
         // spine (ADR-0011). The port is shared (build/git use it too) and stays format-blind: the
-        // use-case holds the ExecSpec/ExecResult carriers, never a Maven type.
+        // use-case holds the ExecSpec/ExecResult carriers, never a Maven/Go type.
         ExecResult result = executor.execute(plan.spec());
 
         // Timeout intercept (issue #6) — BEFORE the report-absence check: a timeout killed before

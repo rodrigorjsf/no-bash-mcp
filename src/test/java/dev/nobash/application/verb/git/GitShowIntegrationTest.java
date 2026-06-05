@@ -1,6 +1,6 @@
 package dev.nobash.application.verb.git;
 
-import dev.nobash.adapter.out.ecosystem.maven.PathScanningManagerResolver;
+import dev.nobash.adapter.out.ecosystem.PathScanningManagerResolver;
 import dev.nobash.adapter.out.git.GitCommandExecutor;
 import dev.nobash.application.runcache.RawOutputStash;
 import dev.nobash.domain.envelope.Envelope;

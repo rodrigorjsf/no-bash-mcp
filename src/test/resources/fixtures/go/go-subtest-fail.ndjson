@@ -1,0 +1,16 @@
+{"Time":"2026-06-05T16:40:00.100000000-03:00","Action":"start","Package":"nbm/table"}
+{"Time":"2026-06-05T16:40:00.101000000-03:00","Action":"run","Package":"nbm/table","Test":"TestValidate"}
+{"Time":"2026-06-05T16:40:00.101100000-03:00","Action":"output","Package":"nbm/table","Test":"TestValidate","Output":"=== RUN   TestValidate\n"}
+{"Time":"2026-06-05T16:40:00.102000000-03:00","Action":"run","Package":"nbm/table","Test":"TestValidate/accepts_valid"}
+{"Time":"2026-06-05T16:40:00.102100000-03:00","Action":"output","Package":"nbm/table","Test":"TestValidate/accepts_valid","Output":"=== RUN   TestValidate/accepts_valid\n"}
+{"Time":"2026-06-05T16:40:00.103000000-03:00","Action":"pass","Package":"nbm/table","Test":"TestValidate/accepts_valid","Elapsed":0}
+{"Time":"2026-06-05T16:40:00.104000000-03:00","Action":"run","Package":"nbm/table","Test":"TestValidate/rejects_empty"}
+{"Time":"2026-06-05T16:40:00.104100000-03:00","Action":"output","Package":"nbm/table","Test":"TestValidate/rejects_empty","Output":"=== RUN   TestValidate/rejects_empty\n"}
+{"Time":"2026-06-05T16:40:00.105000000-03:00","Action":"output","Package":"nbm/table","Test":"TestValidate/rejects_empty","Output":"    validate_test.go:42: Validate(\"\") = nil; want ErrEmpty\n"}
+{"Time":"2026-06-05T16:40:00.105500000-03:00","Action":"output","Package":"nbm/table","Test":"TestValidate/rejects_empty","Output":"    --- FAIL: TestValidate/rejects_empty (0.00s)\n"}
+{"Time":"2026-06-05T16:40:00.105600000-03:00","Action":"fail","Package":"nbm/table","Test":"TestValidate/rejects_empty","Elapsed":0}
+{"Time":"2026-06-05T16:40:00.106000000-03:00","Action":"output","Package":"nbm/table","Test":"TestValidate","Output":"--- FAIL: TestValidate (0.00s)\n"}
+{"Time":"2026-06-05T16:40:00.106500000-03:00","Action":"fail","Package":"nbm/table","Test":"TestValidate","Elapsed":0}
+{"Time":"2026-06-05T16:40:00.107000000-03:00","Action":"output","Package":"nbm/table","Output":"FAIL\n"}
+{"Time":"2026-06-05T16:40:00.107500000-03:00","Action":"output","Package":"nbm/table","Output":"FAIL\tnbm/table\t0.008s\n"}
+{"Time":"2026-06-05T16:40:00.107600000-03:00","Action":"fail","Package":"nbm/table","Elapsed":0.008}
