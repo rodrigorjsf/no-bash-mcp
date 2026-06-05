@@ -11,3 +11,6 @@ target/
 /.project
 /.classpath
 /.factorypath
+.settings
+/.claude/scheduled_tasks.lock
+/docs/handoffs/
