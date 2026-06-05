@@ -2,6 +2,8 @@ package dev.nobash.domain.envelope;
 
 import dev.nobash.domain.error.ErrorCode;
 import dev.nobash.domain.error.OperationalError;
+import dev.nobash.domain.result.BuildSummary;
+import dev.nobash.domain.result.CompileDiagnostic;
 import dev.nobash.domain.result.ContainerFinding;
 import dev.nobash.domain.result.Finding;
 import dev.nobash.domain.result.SourceRef;
@@ -41,15 +43,19 @@ import java.util.List;
  * The success and operational-error shapes carry only server-authored content; they are not
  * neutralized and are marked {@code untrusted=false}.</p>
  *
- * @param ok       whether the operation itself succeeded (the application-layer failure floor)
- * @param verb     the logical operation invoked (e.g. {@code run_tests})
- * @param manager  the detected manager for ecosystem verbs ({@code mvn}); null when none
- * @param summary  the TEST-level counts; present on success / test-failure, null on op-error
- * @param failures the normalized findings (test- and container-level); present only on test-failure
- * @param error    the operational error when this is the op-error shape; null otherwise
- * @param handle   a token to retrieve stashed raw output later; null when nothing was stashed
- * @param untrusted {@code true} when this envelope carries repo-derived content in
- *                  {@code failures[]} that has been neutralized but is still untrusted data
+ * @param ok              whether the operation itself succeeded (the application-layer failure floor)
+ * @param verb            the logical operation invoked (e.g. {@code run_tests}, {@code build})
+ * @param manager         the detected manager for ecosystem verbs ({@code mvn}); null when none
+ * @param summary         the TEST-level counts; present on run_tests success/failure, null otherwise
+ * @param failures        the normalized test findings; present only on run_tests test-failure
+ * @param diagnostics     the compile diagnostics; present only on build compile-failure (ADR-0009)
+ * @param buildSummary    the compile-level counts ({@code errors}/{@code warnings}); present on
+ *                        build success and build compile-failure (ADR-0009)
+ * @param error           the operational error when this is the op-error shape; null otherwise
+ * @param handle          a token to retrieve stashed raw output later; null when nothing was stashed
+ * @param untrusted       {@code true} when this envelope carries repo-derived content that has been
+ *                        neutralized but is still untrusted data ({@code failures[]} or
+ *                        {@code diagnostics[]})
  */
 @Serdeable
 @Introspected
@@ -59,17 +65,45 @@ public record Envelope(boolean ok,
                        @Nullable String manager,
                        @Nullable Summary summary,
                        @Nullable List<Finding> failures,
+                       @Nullable List<CompileDiagnostic> diagnostics,
+                       @Nullable BuildSummary buildSummary,
                        @Nullable OperationalError error,
                        @Nullable Handle handle,
                        boolean untrusted) {
 
     /**
-     * Build a counts-only success envelope ({@code ok=true}). Surfaces NO report — a green run
-     * gives the agent the counts and nothing to triage (token efficiency, CONTEXT.md "Noise").
-     * Server-authored content only; marked {@code untrusted=false}.
+     * Build a counts-only success envelope ({@code ok=true}) for {@code run_tests}. Surfaces NO
+     * report — a green run gives the agent the counts and nothing to triage (token efficiency,
+     * CONTEXT.md "Noise"). Server-authored content only; marked {@code untrusted=false}.
      */
     public static Envelope success(String verb, String manager, Summary summary, @Nullable Handle handle) {
-        return new Envelope(true, verb, manager, summary, null, null, handle, false);
+        return new Envelope(true, verb, manager, summary, null, null, null, null, handle, false);
+    }
+
+    /**
+     * Build a counts-only success envelope ({@code ok=true}) for the {@code build} verb (ADR-0009).
+     * Returns {@code buildSummary:{errors:0,warnings:N}} and no {@code diagnostics[]}.
+     * Server-authored content only; marked {@code untrusted=false}.
+     */
+    public static Envelope buildSuccess(String verb, String manager, BuildSummary buildSummary,
+                                        @Nullable Handle handle) {
+        return new Envelope(true, verb, manager, null, null, null, buildSummary, null, handle, false);
+    }
+
+    /**
+     * Build a compile-failure envelope ({@code ok=false}) for the {@code build} verb (ADR-0009).
+     * Carries {@code diagnostics[]} (parse of the compiler output) and {@code buildSummary} with
+     * the error/warning counts. The {@code message} field of each {@link CompileDiagnostic} is
+     * repo-derived; the diagnostics list is P9-neutralized before storing, and the envelope is
+     * marked {@code untrusted=true}.
+     */
+    public static Envelope buildFailure(String verb, String manager, BuildSummary buildSummary,
+                                        List<CompileDiagnostic> diagnostics, @Nullable Handle handle) {
+        List<CompileDiagnostic> neutralized = diagnostics.stream()
+                .map(Envelope::neutralizeDiagnostic)
+                .toList();
+        return new Envelope(false, verb, manager, null, null, List.copyOf(neutralized),
+                buildSummary, null, handle, true);
     }
 
     /**
@@ -89,7 +123,7 @@ public record Envelope(boolean ok,
         List<Finding> neutralized = failures.stream()
                 .map(Envelope::neutralizeFinding)
                 .toList();
-        return new Envelope(false, verb, manager, summary, List.copyOf(neutralized), null, handle, true);
+        return new Envelope(false, verb, manager, summary, List.copyOf(neutralized), null, null, null, handle, true);
     }
 
     /**
@@ -107,7 +141,7 @@ public record Envelope(boolean ok,
      */
     public static Envelope operationalError(String verb, ErrorCode code, String message, String hint,
                                             @Nullable Handle handle) {
-        return new Envelope(false, verb, null, null, null, new OperationalError(code, message, hint), handle, false);
+        return new Envelope(false, verb, null, null, null, null, null, new OperationalError(code, message, hint), handle, false);
     }
 
     // ---- P9 neutralization helpers ----
@@ -148,5 +182,16 @@ public record Envelope(boolean ok,
         if (src == null) return null;
         String file = OutboundNeutralizer.neutralize(src.file(), OutboundNeutralizer.SOURCE_FILE_CAP);
         return new SourceRef(file, src.line());
+    }
+
+    /**
+     * Apply {@link OutboundNeutralizer} to all repo-derived string fields of a
+     * {@link CompileDiagnostic}. The {@code file} and {@code message} fields are untrusted
+     * compiler output; {@code severity} is a server-controlled value and is not neutralized.
+     */
+    private static CompileDiagnostic neutralizeDiagnostic(CompileDiagnostic d) {
+        String file    = OutboundNeutralizer.neutralize(d.file(),    OutboundNeutralizer.SOURCE_FILE_CAP);
+        String message = OutboundNeutralizer.neutralize(d.message(), OutboundNeutralizer.MESSAGE_CAP);
+        return new CompileDiagnostic(file, d.line(), d.col(), d.severity(), message);
     }
 }

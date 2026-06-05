@@ -1,0 +1,15 @@
+[INFO] Scanning for projects...
+[INFO]
+[INFO] -------------------------< dev.nobash.fixture:fixture-passing >-------------------------
+[INFO] Building fixture-passing 0.0.1-SNAPSHOT
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO]
+[INFO] --- maven-compiler-plugin:3.11.0:compile (default-compile) ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO]
+[INFO] --- maven-compiler-plugin:3.11.0:testCompile (default-testCompile) ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO]
+[INFO] BUILD SUCCESS
+[INFO]
+[INFO] Total time:  0.8 s

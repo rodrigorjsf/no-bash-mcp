@@ -22,17 +22,17 @@ import static org.assertj.core.api.Assertions.assertThat;
  * a real subprocess over JSON-RPC/STDIO and driven through the full handshake, exactly like the
  * s2 spike's {@code stdio_client.py}:
  * {@code initialize} -> {@code notifications/initialized} -> {@code tools/list} ->
- * {@code tools/call run_tests}.
+ * {@code tools/call run_tests} -> {@code tools/call build}.
  *
  * <p>The subprocess runs from the <b>test classpath</b> (not a built jar — {@code mvn test}
  * runs before {@code package}), and its stdout/stderr are redirected to temp files so the
  * classic ProcessBuilder pipe-buffer deadlock cannot occur.</p>
  *
  * <p>Asserts: (AC1) every stdout line is a JSON-RPC message — no banner, no logs leaked to the
- * protocol channel — and logs landed on stderr; (AC2) {@code tools/list} advertises
- * {@code run_tests}; (AC2/AC3) {@code tools/call run_tests} with a non-existent path returns an
- * {@code INVALID_PATH} operational error, proving the verb is callable over STDIO and the guard
- * fires before any process launch.</p>
+ * protocol channel — and logs landed on stderr; (AC2) {@code tools/list} advertises both
+ * {@code run_tests} and {@code build}; (AC2/AC3) {@code tools/call run_tests} with a bad path
+ * returns {@code INVALID_PATH}; (AC1 for build) {@code tools/call build} with a bad path also
+ * returns {@code INVALID_PATH}, proving the build verb is reachable over STDIO.</p>
  */
 @DisplayNameGeneration(DisplayNameGenerator.ReplaceUnderscores.class)
 class StdioServerEndToEndTest {
@@ -75,6 +75,10 @@ class StdioServerEndToEndTest {
                     + "\"params\":{\"name\":\"run_tests\","
                     + "\"arguments\":{\"path\":\"/no/such/path/e2e-does-not-exist\"}}}");
             Thread.sleep(800);
+            send(writer, "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\","
+                    + "\"params\":{\"name\":\"build\","
+                    + "\"arguments\":{\"path\":\"/no/such/path/e2e-does-not-exist\"}}}");
+            Thread.sleep(800);
         }
 
         // Close stdin (done above) and let the server drain + exit.
@@ -111,12 +115,15 @@ class StdioServerEndToEndTest {
 
         String allStdout = String.join("\n", stdoutLines);
 
-        // ---- AC2: run_tests is advertised and callable over STDIO ----
+        // ---- AC2: run_tests and build are both advertised in tools/list ----
         assertThat(allStdout)
                 .as("tools/list must advertise the run_tests tool")
                 .contains("run_tests");
+        assertThat(allStdout)
+                .as("tools/list must advertise the build tool (AC1 for build verb)")
+                .contains("build");
 
-        // ---- AC2 / AC3 over the wire: the call returns the INVALID_PATH operational error ----
+        // ---- AC2 / AC3 over the wire: both verb calls return the INVALID_PATH operational error ----
         assertThat(allStdout)
                 .as("tools/call run_tests at a bad path must return the INVALID_PATH envelope")
                 .contains("INVALID_PATH");
