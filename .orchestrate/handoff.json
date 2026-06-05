@@ -1,0 +1,41 @@
+{
+  "watchdog": {
+    "thresholdPercent": 75,
+    "contextWindowTokens": 1000000
+  },
+  "successor": {
+    "claudeArgs": [
+      "--remote-control",
+      "orchestrate-successor",
+      "--permission-mode",
+      "auto"
+    ],
+    "resumePrompt": "/orchestrate",
+    "terminals": [
+      {
+        "name": "windows-terminal",
+        "argv": [
+          "wt.exe",
+          "new-tab",
+          "--title",
+          "orchestrate-successor",
+          "wsl.exe",
+          "--",
+          "bash",
+          "-lc",
+          "{claudeCommand}"
+        ]
+      },
+      {
+        "name": "warp",
+        "argv": [
+          "warp-terminal",
+          "--",
+          "bash",
+          "-lc",
+          "{claudeCommand}"
+        ]
+      }
+    ]
+  }
+}
