@@ -74,7 +74,18 @@
   npm-delivered native arm64 binary that does not spawn). Spike-gated, not assumed (G15 discipline);
   de-risks the channel before any package is published.
 
-## Open questions (still to grill)
+## Open questions (resolved)
 
-- Exact normalized failure schema (field-level) — to be pinned in the PRD/spec after the spike.
-- Deliverable of this session (PRD / plan / issues).
+- Exact normalized failure schema (field-level) — **resolved**: frozen in
+  [ADR-0007](../adr/0007-normalized-test-result-schema.md) by the universal-schema spike.
+- Deliverable of the PRD-3 grill (PRD / plan / issues) — **resolved** (2026-06-05): published as
+  **PRD-003** (issue #45) with slices S1–S5 (#46–#50); decisions in decision-log D46–D52 +
+  [ADR-0011](../adr/0011-ecosystem-dispatch-strategy.md).
+
+## Known drift / cleanup owed
+
+- **`README.md` is stale post-PRD-2 + ADR-0010** (found 2026-06-05 grill-with-docs). It lists
+  `build` and the git read verbs as "not yet available" though PRD-2 shipped them, and states
+  "`java -jar` is the only launcher" though ADR-0010 chose the npm/npx native launcher. Reconcile
+  the README's shipped-surface list and the launcher instructions when the next PRD lands. The
+  documentation-first / in-sync-README rule (CLAUDE.md) makes this binding, not optional.
