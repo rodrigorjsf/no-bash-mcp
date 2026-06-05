@@ -1,0 +1,103 @@
+##
+## integration-acceptance.yml — MCP Inspector --cli acceptance gate (issue #8)
+##
+## This workflow runs the Failsafe integration tests (*IT.java) against the packaged JVM jar.
+## It is separate from the inline unit gate (which runs `mvn test` in the main CI workflow) so
+## the external prerequisites (Node/npx, MCP Inspector, jq) are only required here.
+##
+## Prerequisites provisioned by this workflow:
+##   - Java 25 (LTS) via Temurin — the same JDK the main build uses.
+##   - Maven 3.9.x — from the system image; no wrapper needed (ADR-0008: trusted launcher).
+##   - Node.js 22 LTS + npm — required for `npx` to run the pinned MCP Inspector.
+##   - jq — pre-installed on ubuntu-latest; verified by `jq --version` step.
+##   - MCP Inspector @modelcontextprotocol/inspector@0.14.1 — pinned; never @latest.
+##   - ~/.m2 pre-warmed — the unit-test phase warms the cache; the IT runs after `mvn test`.
+##
+## How to run locally (after 'mvn test' has warmed ~/.m2):
+##   mvn -DskipTests package   # build the jar
+##   mvn verify                # package (skipped if already done) + integration-test + verify
+##
+## Pinned Inspector version: 0.14.1
+## Bump the pinned version here AND in InspectorAcceptanceIT.INSPECTOR_VERSION together.
+##
+name: MCP Inspector Acceptance (IT)
+
+on:
+  push:
+    branches: [ "master", "main", "develop", "slice-*" ]
+    paths:
+      - "src/**"
+      - "pom.xml"
+      - ".github/workflows/integration-acceptance.yml"
+  pull_request:
+    branches: [ "master", "main", "develop" ]
+    paths:
+      - "src/**"
+      - "pom.xml"
+  workflow_dispatch: {}
+
+jobs:
+  inspector-acceptance:
+    name: Inspector --cli acceptance (JVM jar)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. Java 25 (Temurin) ───────────────────────────────────────────────
+      - name: Set up Java 25 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          java-version: "25"
+          distribution: temurin
+          # Cache Maven local repo across runs to avoid cold-cache builds.
+          # This pre-warms ~/.m2 with the project dependencies resolved during the test phase.
+          cache: maven
+
+      # ── 3. Node.js 22 LTS (for npx / MCP Inspector) ───────────────────────
+      - name: Set up Node.js 22 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # ── 4. Verify jq is available ──────────────────────────────────────────
+      - name: Verify jq
+        run: jq --version
+
+      # ── 5. Pre-warm the MCP Inspector (pinned @0.14.1) ────────────────────
+      # Running `npx --yes @modelcontextprotocol/inspector@0.14.1 --version` before the tests
+      # ensures the package is downloaded from the npm registry and cached in the runner's
+      # npm cache. The IT probe (`probeInspector()`) reuses this warm cache without a network
+      # fetch, keeping the IT fast and making its prerequisite check reliable.
+      - name: Pre-warm MCP Inspector 0.14.1
+        run: npx --yes @modelcontextprotocol/inspector@0.14.1 --version
+
+      # ── 6. Verify Maven is available ──────────────────────────────────────
+      - name: Verify mvn
+        run: mvn --version
+
+      # ── 7. Run unit tests (warms ~/.m2) ───────────────────────────────────
+      # The Maven `setup-java` action with `cache: maven` restores and saves ~/.m2 across
+      # pushes. Running `mvn test` here both (a) verifies the 152 unit tests stay green and
+      # (b) resolves the project's Maven dependencies into the local repo, so the IT's
+      # fixture Maven projects (which use standard JUnit 5 from Maven Central) do not need
+      # a live network fetch.
+      - name: Unit tests (warms ~/.m2 + verifies 152 green)
+        run: mvn -B test
+
+      # ── 8. Package the JVM jar ────────────────────────────────────────────
+      # `mvn -DskipTests package` compiles the project (including *IT.java test sources) and
+      # produces no-bash-mcp-0.1.0-SNAPSHOT.jar in target/. The Failsafe IT locates this jar
+      # via the `project.build.directory` system property injected by the Failsafe plugin config.
+      - name: Package (JVM jar, skip tests)
+        run: mvn -B -DskipTests package
+
+      # ── 9. Run Failsafe ITs (Inspector --cli acceptance) ──────────────────
+      # `mvn verify -DskipTests` skips Surefire unit tests (already ran in step 7) but runs
+      # Failsafe integration tests via the integration-test/verify lifecycle. This is the
+      # acceptance gate: Inspector --cli against the packaged jar, three envelope assertions.
+      - name: Failsafe integration tests (Inspector --cli acceptance)
+        run: mvn -B verify -DskipTests

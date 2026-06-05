@@ -1,0 +1,249 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>dev.nobash</groupId>
+  <artifactId>no-bash-mcp</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>jar</packaging>
+
+  <parent>
+    <groupId>io.micronaut.platform</groupId>
+    <artifactId>micronaut-parent</artifactId>
+    <version>5.0.2</version>
+  </parent>
+
+  <properties>
+    <jdk.version>25</jdk.version>
+    <release.version>25</release.version>
+    <micronaut.version>5.0.2</micronaut.version>
+    <micronaut.aot.enabled>false</micronaut.aot.enabled>
+    <exec.mainClass>dev.nobash.Application</exec.mainClass>
+    <!-- Pinned, unmanaged: ArchUnit core (DESIGN.md §10). NOT archunit-junit5 (incompatible
+         with JUnit 6, issue #1556). -->
+    <archunit.version>1.4.2</archunit.version>
+  </properties>
+
+  <repositories>
+    <repository>
+      <id>central</id>
+      <url>https://repo.maven.apache.org/maven2</url>
+    </repository>
+  </repositories>
+
+  <dependencies>
+
+    <dependency>
+      <groupId>io.micronaut.jsonschema</groupId>
+      <artifactId>micronaut-json-schema-annotations</artifactId>
+      <scope>compile</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>io.micronaut.mcp</groupId>
+      <artifactId>micronaut-mcp-server-java-sdk</artifactId>
+      <scope>compile</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>io.micronaut.serde</groupId>
+      <artifactId>micronaut-serde-jackson</artifactId>
+      <scope>compile</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>io.micronaut.validation</groupId>
+      <artifactId>micronaut-validation</artifactId>
+      <scope>compile</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>jakarta.validation</groupId>
+      <artifactId>jakarta.validation-api</artifactId>
+      <scope>compile</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <!-- YAML parser: Micronaut silently ignores application.yml unless snakeyaml is on the
+         classpath. Required for the STDIO transport property to load and the MCP embedded
+         server to start (AC1/AC2). Version managed by the platform BOM. -->
+    <dependency>
+      <groupId>org.yaml</groupId>
+      <artifactId>snakeyaml</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>io.micronaut.test</groupId>
+      <artifactId>micronaut-test-junit5</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter-api</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter-engine</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter-params</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>com.tngtech.archunit</groupId>
+      <artifactId>archunit</artifactId>
+      <version>${archunit.version}</version>
+      <scope>test</scope>
+    </dependency>
+
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <!-- The inherited micronaut-enforce execution registers the checkSnakeYaml rule,
+             which fails to instantiate under the host's Maven 3.8.6 (deprecated Enforcer
+             API). The CI/release build uses the Maven wrapper (3.9.15); this slice's gate
+             runs the system mvn, so the execution is disabled here to keep the build
+             portable across Maven versions. -->
+        <executions>
+          <execution>
+            <id>micronaut-enforce</id>
+            <phase>none</phase>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <annotationProcessorPaths combine.children="append">
+            <path>
+              <groupId>io.micronaut</groupId>
+              <artifactId>micronaut-http-validation</artifactId>
+              <version>${micronaut.core.version}</version>
+            </path>
+            <path>
+              <groupId>io.micronaut.jsonschema</groupId>
+              <artifactId>micronaut-json-schema-processor</artifactId>
+            </path>
+            <path>
+              <groupId>io.micronaut.serde</groupId>
+              <artifactId>micronaut-serde-processor</artifactId>
+              <version>${micronaut.serialization.version}</version>
+              <exclusions>
+                <exclusion>
+                  <groupId>io.micronaut</groupId>
+                  <artifactId>micronaut-inject</artifactId>
+                </exclusion>
+              </exclusions>
+            </path>
+            <path>
+              <groupId>io.micronaut.validation</groupId>
+              <artifactId>micronaut-validation-processor</artifactId>
+              <version>${micronaut.validation.version}</version>
+              <exclusions>
+                <exclusion>
+                  <groupId>io.micronaut</groupId>
+                  <artifactId>micronaut-inject</artifactId>
+                </exclusion>
+              </exclusions>
+            </path>
+          </annotationProcessorPaths>
+          <compilerArgs>
+            <arg>-Amicronaut.processing.group=dev.nobash</arg>
+            <arg>-Amicronaut.processing.module=no-bash-mcp</arg>
+          </compilerArgs>
+        </configuration>
+      </plugin>
+      <plugin>
+        <!-- Copy all runtime dependencies to target/dependency/ before packaging.
+             This allows the thin jar's MANIFEST.MF Class-Path to reference them so
+             `java -jar no-bash-mcp-0.1.0-SNAPSHOT.jar` is fully self-contained for
+             the InspectorAcceptanceIT (issue #8). -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>copy-dependencies</id>
+            <phase>prepare-package</phase>
+            <goals>
+              <goal>copy-dependencies</goal>
+            </goals>
+            <configuration>
+              <outputDirectory>${project.build.directory}/dependency</outputDirectory>
+              <overWriteIfNewer>true</overWriteIfNewer>
+              <!-- Include runtime + compile scope only (not test, not provided) -->
+              <includeScope>runtime</includeScope>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <!-- Configure the thin jar MANIFEST.MF so 'java -jar' works without a fat jar.
+             Class-Path entries point to the dependency/ directory populated above. -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <configuration>
+          <archive>
+            <manifest>
+              <addClasspath>true</addClasspath>
+              <classpathPrefix>dependency/</classpathPrefix>
+              <mainClass>dev.nobash.Application</mainClass>
+            </manifest>
+          </archive>
+        </configuration>
+      </plugin>
+      <plugin>
+        <!-- Failsafe runs *IT.java in the integration-test/verify phase, keeping *Test.java
+             (Surefire, mvn test) strictly separate. The IT requires external prerequisites
+             (npx, MCP Inspector, jq, Java-25 system mvn) that are intentionally CI-gated;
+             it is never run as part of the inline unit gate. -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <executions>
+          <execution>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+            <configuration>
+              <!-- Pass the project build directory so the IT can locate the packaged jar -->
+              <systemPropertyVariables>
+                <project.build.directory>${project.build.directory}</project.build.directory>
+              </systemPropertyVariables>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+
+</project>

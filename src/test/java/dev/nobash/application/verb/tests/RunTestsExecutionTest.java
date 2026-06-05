@@ -1,0 +1,460 @@
+package dev.nobash.application.verb.tests;
+
+import dev.nobash.application.runcache.RawOutputStash;
+import dev.nobash.domain.envelope.Envelope;
+import dev.nobash.domain.error.ErrorCode;
+import dev.nobash.domain.port.out.CommandExecutorPort;
+import dev.nobash.domain.port.out.ExecResult;
+import dev.nobash.domain.port.out.ExecSpec;
+import dev.nobash.domain.result.ContainerFinding;
+import dev.nobash.domain.result.Finding;
+import dev.nobash.domain.result.TestFinding;
+import io.micronaut.test.annotation.MockBean;
+import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
+import jakarta.inject.Inject;
+import org.junit.jupiter.api.DisplayNameGeneration;
+import org.junit.jupiter.api.DisplayNameGenerator;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.mockito.Mockito;
+import org.mockito.stubbing.Answer;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+
+/**
+ * The end-to-end execution tracer for {@code run_tests} (issue #4, AC1–AC10). The only outbound
+ * seam — {@link CommandExecutorPort} — is a {@code @MockBean} whose Mockito {@link Answer} writes
+ * the chosen fixture's XML into the MCP-injected reports directory <em>at call time</em> (or
+ * leaves it empty, for {@code REPORT_NOT_PRODUCED}), exactly modelling a real Maven run that
+ * produces (or fails to produce) Surefire reports in the directory the MCP controls.
+ *
+ * <p>{@code startApplication=false} so the STDIO loop does not hijack the test JVM
+ * (DESIGN.md §9); {@code @MockBean} (NOT {@code @ExtendWith(MockitoExtension)}) so the mock is
+ * injected through the real DI graph the verb runs under.</p>
+ */
+@MicronautTest(startApplication = false)
+@DisplayNameGeneration(DisplayNameGenerator.ReplaceUnderscores.class)
+class RunTestsExecutionTest {
+
+    @Inject
+    RunTestsUseCase useCase;
+
+    @Inject
+    CommandExecutorPort executor;
+
+    @Inject
+    RawOutputStash stash;
+
+    /** Captures the ExecSpec the use-case hands to the seam, so AC9/AC10 can inspect it. */
+    private final AtomicReference<ExecSpec> capturedSpec = new AtomicReference<>();
+
+    @MockBean(CommandExecutorPort.class)
+    CommandExecutorPort executorMock() {
+        CommandExecutorPort m = mock(CommandExecutorPort.class);
+        Mockito.when(m.isManagerInstalled()).thenReturn(true);
+        return m;
+    }
+
+    /** The MCP-injected reports directory is whatever value the use-case put in the ExecSpec. */
+    private Path injectedReportsDir(ExecSpec spec) {
+        String token = spec.argv().stream()
+                .filter(a -> a.startsWith("-Dsurefire.reportsDirectory="))
+                .findFirst().orElseThrow(() -> new AssertionError("no reportsDirectory was injected"));
+        return Path.of(token.substring("-Dsurefire.reportsDirectory=".length()));
+    }
+
+    /** Stub execute() to write the given fixture bytes into the injected dir and return exit. */
+    private void stubExec(int exitCode, String stderr, String... fixtureResources) {
+        Mockito.when(executor.execute(Mockito.any())).thenAnswer((Answer<ExecResult>) inv -> {
+            ExecSpec spec = inv.getArgument(0);
+            capturedSpec.set(spec);
+            Path dir = injectedReportsDir(spec);
+            Files.createDirectories(dir);
+            int i = 0;
+            for (String resource : fixtureResources) {
+                Files.write(dir.resolve("TEST-fixture-" + (i++) + ".xml"), readBytes(resource));
+            }
+            return new ExecResult(exitCode, "", stderr, false);
+        });
+    }
+
+    /** Stub execute() to leave the injected dir EMPTY (compile failure) and return exit+stderr. */
+    private void stubEmpty(int exitCode, String stderr) {
+        Mockito.when(executor.execute(Mockito.any())).thenAnswer((Answer<ExecResult>) inv -> {
+            ExecSpec spec = inv.getArgument(0);
+            capturedSpec.set(spec);
+            Files.createDirectories(injectedReportsDir(spec));
+            return new ExecResult(exitCode, "", stderr, false);
+        });
+    }
+
+    /**
+     * Stub execute() to model a TIMEOUT mid-run: it writes the given fixture(s) into the injected
+     * dir (the fresh partials a real Surefire run would have written before the kill) AND returns
+     * a {@code timedOut=true} ExecResult, exactly as the real executor does after a tree-kill.
+     */
+    private void stubExecTimedOut(String partialStdout, String... fixtureResources) {
+        Mockito.when(executor.execute(Mockito.any())).thenAnswer((Answer<ExecResult>) inv -> {
+            ExecSpec spec = inv.getArgument(0);
+            capturedSpec.set(spec);
+            Path dir = injectedReportsDir(spec);
+            Files.createDirectories(dir);
+            int i = 0;
+            for (String resource : fixtureResources) {
+                Files.write(dir.resolve("TEST-fixture-" + (i++) + ".xml"), readBytes(resource));
+            }
+            return new ExecResult(-1, partialStdout, "", true);
+        });
+    }
+
+    private Path mavenProject(Path dir) throws Exception {
+        Files.writeString(dir.resolve("pom.xml"), "<project/>");
+        return dir;
+    }
+
+    // ---- AC1 — all-passing run with executedTests > 0 → counts-only ok=true ----
+    @Test
+    void all_passing_run_returns_counts_only_ok_true_envelope(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(0, "", "fixtures/maven/surefire-all-passed.xml");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+        assertThat(env.ok()).isTrue();
+        assertThat(env.verb()).isEqualTo("run_tests");
+        assertThat(env.manager()).isEqualTo("mvn");
+        assertThat(env.summary().passed()).isGreaterThan(0);
+        assertThat(env.failures()).as("a green run surfaces no report").isNull();
+        assertThat(env.error()).isNull();
+    }
+
+    // ---- AC2 — failing run → failures[] with kind/identity/outcome/source ----
+    @Test
+    void failing_run_returns_failures_with_kind_identity_and_best_effort_source(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(1, "", "fixtures/maven/surefire-normal-error-failure-skipped.xml");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+        assertThat(env.ok()).isFalse();
+        assertThat(env.failures()).isNotEmpty();
+        Finding addFails = env.failures().stream()
+                .filter(f -> f instanceof TestFinding tf && tf.name().equals("addFailsAssertion"))
+                .findFirst().orElseThrow();
+        assertThat(addFails).isInstanceOfSatisfying(TestFinding.class, tf -> {
+            assertThat(tf.suite()).isEqualTo("nobash.proto.NormalTests");
+            assertThat(tf.name()).isEqualTo("addFailsAssertion");
+            assertThat(tf.path()).as("the flexible identity path is present (empty, never null)").isEmpty();
+            assertThat(tf.outcome()).isEqualTo(dev.nobash.domain.result.Outcome.FAILED);
+            assertThat(tf.rawStatus()).isEqualTo("failure");
+            assertThat(tf.source()).isNotNull();
+            assertThat(tf.source().file()).isEqualTo("NormalTests.java");
+            assertThat(tf.source().line()).isEqualTo(25);
+        });
+    }
+
+    // ---- AC3 / fixture (b) — compile failure (empty fresh dir) → REPORT_NOT_PRODUCED ----
+    @Test
+    void compile_failure_with_empty_fresh_dir_returns_REPORT_NOT_PRODUCED_with_raw_output_behind_handle(
+            @TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        String compilerOutput = "[ERROR] /src/Foo.java:[7,3] cannot find symbol";
+        stubEmpty(1, compilerOutput);
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+        assertThat(env.ok()).isFalse();
+        assertThat(env.error().code()).isEqualTo(ErrorCode.REPORT_NOT_PRODUCED);
+        assertThat(env.error().hint().toLowerCase()).contains("build");
+        assertThat(env.handle()).isNotNull();
+        assertThat(stash.get(env.handle())).contains("cannot find symbol");
+    }
+
+    // ---- AC4 / fixture (c) — non-zero exit + all-PASSED findings → ok=false (D28 exit floor) ----
+    @Test
+    void non_zero_exit_with_all_passed_findings_is_not_ok(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(1, "", "fixtures/maven/surefire-all-passed.xml");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+        assertThat(env.ok()).as("D28: a non-zero exit floors ok to false even with all-passed findings").isFalse();
+    }
+
+    // ---- AC5 / fixture (d) — fresh report, zero executed testcases, exit 0 → NO_TESTS_RUN ----
+    @Test
+    void fresh_report_with_zero_executed_testcases_and_exit_zero_returns_NO_TESTS_RUN(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(0, "", "fixtures/maven/surefire-paramnested-outer.xml");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+        assertThat(env.ok()).isFalse();
+        assertThat(env.error().code()).isEqualTo(ErrorCode.NO_TESTS_RUN);
+    }
+
+    // ---- AC6 / fixture (e) — all-SKIPPED fresh report + exit 0 → NO_TESTS_RUN ----
+    @Test
+    void all_skipped_report_with_exit_zero_returns_NO_TESTS_RUN(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(0, "", "fixtures/maven/surefire-all-skipped.xml");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+        assertThat(env.ok()).isFalse();
+        assertThat(env.error().code()).isEqualTo(ErrorCode.NO_TESTS_RUN);
+    }
+
+    // ---- AC7 / fixture (g) — non-zero exit + real FAILED finding → ok=false, once, counts unchanged ----
+    @Test
+    void non_zero_exit_with_a_real_failed_finding_is_not_ok_and_the_failure_appears_once(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(1, "", "fixtures/maven/surefire-normal-error-failure-skipped.xml");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+        assertThat(env.ok()).isFalse();
+        // Summary.failed is the report's own count (2), untouched by the floor — the floor adds
+        // only the boolean, never a synthetic finding.
+        assertThat(env.summary().failed()).isEqualTo(2);
+        long addFailsOccurrences = env.failures().stream()
+                .filter(f -> f instanceof TestFinding tf && tf.name().equals("addFailsAssertion"))
+                .count();
+        assertThat(addFailsOccurrences).as("the failure appears exactly once").isEqualTo(1);
+    }
+
+    // ---- AC8 / fixture (a) — container-only run → ok=false test-failure envelope (NOT NO_TESTS_RUN) ----
+    @Test
+    void container_only_run_is_a_not_ok_test_failure_envelope_carrying_the_container_finding(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(1, "", "fixtures/maven/surefire-container-beforeall-error.xml");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+        // executedTests==0 here too, but run.ok()==false, so it must NOT be NO_TESTS_RUN — it is
+        // a test-failure envelope carrying the container finding (the G5 keystone).
+        assertThat(env.error()).isNull();
+        assertThat(env.ok()).isFalse();
+        assertThat(env.failures()).singleElement().isInstanceOf(ContainerFinding.class);
+    }
+
+    // ---- AC (issue #5) — every post-exec envelope carries a non-null Handle ----
+
+    @Test
+    void all_passing_run_envelope_carries_a_non_null_handle(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(0, "", "fixtures/maven/surefire-all-passed.xml");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+        assertThat(env.ok()).isTrue();
+        assertThat(env.handle()).as("a successful run must carry a Handle for get_log").isNotNull();
+        assertThat(env.handle().id()).as("the handle id must be non-blank").isNotBlank();
+    }
+
+    @Test
+    void failing_run_envelope_carries_a_non_null_handle(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(1, "", "fixtures/maven/surefire-normal-error-failure-skipped.xml");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+        assertThat(env.ok()).isFalse();
+        assertThat(env.failures()).isNotEmpty();
+        assertThat(env.handle()).as("a test-failure run must carry a Handle for get_log").isNotNull();
+        assertThat(env.handle().id()).as("the handle id must be non-blank").isNotBlank();
+    }
+
+    @Test
+    void handle_from_failing_run_can_drill_into_failing_test_detail(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(1, "", "fixtures/maven/surefire-normal-error-failure-skipped.xml");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+        // The handle must be usable for get_log without re-running: the stashed record holds the
+        // failing test's full detail, retrievable by identity (no re-execution).
+        assertThat(env.handle()).isNotNull();
+        assertThat(stash.getRecord(env.handle())).isNotNull();
+        String detail = stash.getRecord(env.handle()).findings().stream()
+                .filter(f -> f instanceof TestFinding tf && tf.name().equals("addFailsAssertion"))
+                .map(Finding::detail)
+                .findFirst().orElse(null);
+        assertThat(detail).as("the failing test's detail is retained behind the handle").isNotNull();
+    }
+
+    // ---- AC10 — the reportsDirectory token is MCP-injected and an agent flag cannot supply it ----
+    @Test
+    void the_reports_directory_is_mcp_injected_and_not_droppable_agent_input(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(0, "", "fixtures/maven/surefire-all-passed.xml");
+
+        // The agent tries to smuggle its own reportsDirectory (and -DskipTests) via flags.
+        useCase.run(dir.toString(),
+                List.of("-Dsurefire.reportsDirectory=/tmp/agent-controlled", "-DskipTests"), null);
+
+        ExecSpec spec = capturedSpec.get();
+        List<String> reportDirTokens = spec.argv().stream()
+                .filter(a -> a.startsWith("-Dsurefire.reportsDirectory=")).toList();
+        // Exactly ONE reportsDirectory token, and it is NOT the agent's value (the agent flag was
+        // dropped by the allowlist; the MCP appended its own fresh-tmp value).
+        assertThat(reportDirTokens).hasSize(1);
+        assertThat(reportDirTokens.get(0)).doesNotContain("/tmp/agent-controlled");
+        assertThat(spec.argv()).doesNotContain("-DskipTests");
+    }
+
+    // ---- issue #6 fixture (f) — timeout mid-run leaving fresh PASSED partials → TIMEOUT, ok=false ----
+    @Test
+    void timeout_mid_run_with_fresh_passed_partials_is_a_TIMEOUT_envelope_with_ok_false(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        // A real Surefire run wrote PASSED rows before the deadline fired and the tree was killed.
+        stubExecTimedOut("partial out before the kill\n",
+                "fixtures/maven/surefire-timeout-fresh-passed-partials.xml");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+        // The DISCRIMINATING assertions (not ok=false alone — the floor already nulls ok on
+        // timedOut, so ok=false would pass even without the TIMEOUT branch): it is a TIMEOUT
+        // OPERATIONAL error, never a vacuous-green success, even though the only report rows passed.
+        assertThat(env.ok()).as("a timeout floors ok to false even with all-passed partials").isFalse();
+        assertThat(env.error()).as("a timeout is an operational error, not a test-failure envelope").isNotNull();
+        assertThat(env.error().code()).isEqualTo(ErrorCode.TIMEOUT);
+        // The partial signal is retained behind the handle (op-error shape — manager/summary/failures null).
+        assertThat(env.handle()).as("the partial signal is behind the handle").isNotNull();
+        assertThat(env.summary()).isNull();
+        assertThat(env.failures()).isNull();
+        assertThat(stash.get(env.handle())).contains("partial out before the kill");
+    }
+
+    // ---- issue #6 — a timeout that wrote NO report still reports TIMEOUT (not REPORT_NOT_PRODUCED) ----
+    @Test
+    void timeout_with_an_empty_reports_dir_is_TIMEOUT_not_REPORT_NOT_PRODUCED(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        // The deadline fired before any Surefire report was written — the dir stays empty.
+        stubExecTimedOut("killed before any report\n");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+        // The timeout intercept runs BEFORE the empty-dir check, so an empty-on-timeout run is
+        // TIMEOUT, never mislabelled REPORT_NOT_PRODUCED (a compile failure).
+        assertThat(env.error()).isNotNull();
+        assertThat(env.error().code()).isEqualTo(ErrorCode.TIMEOUT);
+    }
+
+    // ---- issue #6 — the agent's timeout is clamped onto the ExecSpec (default / cap) ----
+    @Test
+    void an_unspecified_timeout_defaults_onto_the_exec_spec(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(0, "", "fixtures/maven/surefire-all-passed.xml");
+
+        useCase.run(dir.toString(), List.of(), null);
+
+        assertThat(capturedSpec.get().timeoutSeconds()).isEqualTo(TimeoutPolicy.DEFAULT_SECONDS);
+    }
+
+    @Test
+    void an_over_cap_timeout_is_clamped_to_the_cap_on_the_exec_spec(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(0, "", "fixtures/maven/surefire-all-passed.xml");
+
+        useCase.run(dir.toString(), List.of(), TimeoutPolicy.MAX_SECONDS + 5_000);
+
+        assertThat(capturedSpec.get().timeoutSeconds())
+                .as("the agent may raise the timeout only up to the cap, never beyond")
+                .isEqualTo(TimeoutPolicy.MAX_SECONDS);
+    }
+
+    @Test
+    void an_in_range_timeout_is_passed_through_onto_the_exec_spec(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(0, "", "fixtures/maven/surefire-all-passed.xml");
+
+        useCase.run(dir.toString(), List.of(), TimeoutPolicy.DEFAULT_SECONDS + 1);
+
+        assertThat(capturedSpec.get().timeoutSeconds()).isEqualTo(TimeoutPolicy.DEFAULT_SECONDS + 1);
+    }
+
+    // ---- issue #9 AC1 — targeted run (CLASS) returns the same three Envelope shapes ----
+
+    @Test
+    void targeted_class_run_returns_counts_only_ok_true_envelope(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(0, "", "fixtures/maven/surefire-all-passed.xml");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null, "CLASS", "FooTest");
+
+        assertThat(env.ok()).isTrue();
+        assertThat(env.summary().passed()).isGreaterThan(0);
+        assertThat(env.failures()).as("counts-only success").isNull();
+        assertThat(env.error()).isNull();
+    }
+
+    @Test
+    void targeted_method_run_returns_ok_false_test_failure_envelope(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(1, "", "fixtures/maven/surefire-normal-error-failure-skipped.xml");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null, "METHOD", "FooTest#testBar");
+
+        assertThat(env.ok()).isFalse();
+        assertThat(env.failures()).isNotEmpty();
+        assertThat(env.error()).isNull();
+    }
+
+    @Test
+    void targeted_run_with_compile_failure_returns_REPORT_NOT_PRODUCED(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubEmpty(1, "[ERROR] compile failed");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null, "CLASS", "FooTest");
+
+        assertThat(env.ok()).isFalse();
+        assertThat(env.error().code()).isEqualTo(ErrorCode.REPORT_NOT_PRODUCED);
+    }
+
+    @Test
+    void targeted_run_injects_exactly_one_dtest_token_and_an_agent_dtest_flag_is_dropped(
+            @TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(0, "", "fixtures/maven/surefire-all-passed.xml");
+
+        // The agent tries to inject its own -Dtest= as a free flag; the structured target is CLASS.
+        useCase.run(dir.toString(), List.of("-Dtest=AgentControlled"), null, "CLASS", "MpcControlled");
+
+        ExecSpec spec = capturedSpec.get();
+        List<String> testTokens = spec.argv().stream()
+                .filter(a -> a.startsWith("-Dtest=")).toList();
+
+        // Exactly ONE -Dtest= token — the MCP-controlled value. The agent's flag was dropped.
+        assertThat(testTokens).hasSize(1);
+        assertThat(testTokens.get(0)).isEqualTo("-Dtest=MpcControlled");
+    }
+
+    @Test
+    void a_full_suite_run_has_no_dtest_token_in_the_argv(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        stubExec(0, "", "fixtures/maven/surefire-all-passed.xml");
+
+        useCase.run(dir.toString(), List.of(), null, null, null);
+
+        ExecSpec spec = capturedSpec.get();
+        assertThat(spec.argv()).noneMatch(a -> a.startsWith("-Dtest="));
+    }
+
+    private static byte[] readBytes(String resource) {
+        try (var in = RunTestsExecutionTest.class.getClassLoader().getResourceAsStream(resource)) {
+            if (in == null) {
+                throw new IllegalStateException("Missing fixture on classpath: " + resource);
+            }
+            return in.readAllBytes();
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to read fixture: " + resource, e);
+        }
+    }
+}
