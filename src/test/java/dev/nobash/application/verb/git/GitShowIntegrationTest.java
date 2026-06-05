@@ -144,4 +144,21 @@ class GitShowIntegrationTest {
         assertThat(env.ok()).isFalse();
         assertThat(env.error().code()).isEqualTo(ErrorCode.INVALID_PATH);
     }
+
+    // ---- lock-in: empty-but-initialized repo (unborn HEAD) → COMMIT_NOT_FOUND ----
+
+    @Test
+    void an_empty_repo_with_no_commits_and_ref_HEAD_returns_COMMIT_NOT_FOUND(@TempDir Path tmp) {
+        // git_show is ref-targeted; on an unborn-HEAD repo, HEAD does not resolve to any
+        // commit. This is a genuine COMMIT_NOT_FOUND (the ref does not exist), NOT a
+        // NOT_A_GIT_REPOSITORY (the repo IS valid — it just has no commits). This lock-in
+        // test pins this defensible behavior so it cannot silently change.
+        GitRepoFixture repo = GitRepoFixture.init(tmp);
+
+        Envelope env = useCase().run(repo.dir().toString(), "HEAD", null);
+
+        assertThat(env.ok()).isFalse();
+        assertThat(env.error().code()).isEqualTo(ErrorCode.COMMIT_NOT_FOUND);
+        assertThat(env.gitShow()).isNull();
+    }
 }
