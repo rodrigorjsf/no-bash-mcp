@@ -8,3 +8,6 @@ target/
 # OS
 .DS_Store
 .orchestrate/runs/
+/.project
+/.classpath
+/.factorypath

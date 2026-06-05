@@ -59,3 +59,10 @@ Five canonical triage roles using their default label names. See `docs/agents/tr
 ### Domain docs
 
 Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+## Applied Learning
+
+When something fails repeatedly, when User has to re-explain, or when a workaround is found for a platform/tool limitation, add a one-line bullet here. Keep each bullet under 15 words. No explanations. Only add things that will save time in future sessions.
+
+- After `git pull`, run `mvn clean test` — stale `target/` false-REDs `EnvelopeSerde`.
+- Standalone issue: bare `/orchestrate`; `/orchestrate <N>` only filters PRD #N children.

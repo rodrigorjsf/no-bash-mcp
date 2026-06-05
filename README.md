@@ -1,6 +1,7 @@
 # No bash MCP
 
-![](readme-logo.png)
+![](assets/readme-logo.png)
+---
 
 > **v1 in progress.** The shipped surface is `run_tests` (Maven) and `get_log`. Node/Go/forge verbs
 > and a native binary release are roadmap items, not yet available.
