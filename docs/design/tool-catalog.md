@@ -51,8 +51,8 @@ by a separate security domain — see [`forge-security-model.md`](./forge-securi
   message}` — a build-specific shape distinct from test `failures[]` ([ADR-0009](../adr/0009-build-compile-diagnostic-output.md));
   full compiler output via `handle`.
 - **Failure (operational)** → enumerated `code` (`NO_MANAGER_DETECTED`, `TOOL_NOT_INSTALLED`,
-  `DEPS_NOT_INSTALLED`, `REPORT_NOT_PRODUCED`, `TIMEOUT`, `INVALID_PATH`, `AMBIGUOUS_SCOPE`,
-  `RESOURCE_BUSY`, …) +
+  `DEPS_NOT_INSTALLED`, `UNSUPPORTED_TEST_FRAMEWORK`, `INSTALL_FAILED`, `REPORT_NOT_PRODUCED`,
+  `TIMEOUT`, `INVALID_PATH`, `AMBIGUOUS_SCOPE`, `RESOURCE_BUSY`, …) +
   message + actionable `hint`. Distinct from test failures so the agent branches deterministically.
 - **Preflight** → before `run_tests`/`build`, if dependencies are missing or out of sync with the
   lockfile, return `DEPS_NOT_INSTALLED` (hint: "run `install`") instead of letting the agent hit a
