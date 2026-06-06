@@ -12,6 +12,7 @@ import dev.nobash.domain.result.BuildSummary;
 import dev.nobash.domain.result.CompileDiagnostic;
 import dev.nobash.domain.result.ContainerFinding;
 import dev.nobash.domain.result.Finding;
+import dev.nobash.domain.result.InstallSummary;
 import dev.nobash.domain.result.SourceRef;
 import dev.nobash.domain.result.TestFinding;
 import dev.nobash.domain.result.Summary;
@@ -73,6 +74,8 @@ import java.util.List;
  *                        {@code handle}
  * @param gitBranch       the normalized branch list; present only on a git_branch result
  *                        (PRD-002, issue #28); output is bounded — no stash/handle needed
+ * @param installSummary  the npm install counts ({@code added/removed/changed}); present only on
+ *                        an {@code install} success envelope (PRD-3, slice 3)
  * @param error           the operational error when this is the op-error shape; null otherwise
  * @param handle          a token to retrieve stashed raw output later; null when nothing was stashed
  * @param untrusted       {@code true} when this envelope carries repo-derived content that has been
@@ -95,6 +98,7 @@ public record Envelope(boolean ok,
                        @Nullable GitCommitDetail gitShow,
                        @Nullable List<GitDiffEntry> gitDiff,
                        @Nullable List<GitBranchEntry> gitBranch,
+                       @Nullable InstallSummary installSummary,
                        @Nullable OperationalError error,
                        @Nullable Handle handle,
                        boolean untrusted) {
@@ -105,7 +109,7 @@ public record Envelope(boolean ok,
      * CONTEXT.md "Noise"). Server-authored content only; marked {@code untrusted=false}.
      */
     public static Envelope success(String verb, String manager, Summary summary, @Nullable Handle handle) {
-        return new Envelope(true, verb, manager, summary, null, null, null, null, null, null, null, null, null, handle, false);
+        return new Envelope(true, verb, manager, summary, null, null, null, null, null, null, null, null, null, null, handle, false);
     }
 
     /**
@@ -115,7 +119,7 @@ public record Envelope(boolean ok,
      */
     public static Envelope buildSuccess(String verb, String manager, BuildSummary buildSummary,
                                         @Nullable Handle handle) {
-        return new Envelope(true, verb, manager, null, null, null, buildSummary, null, null, null, null, null, null, handle, false);
+        return new Envelope(true, verb, manager, null, null, null, buildSummary, null, null, null, null, null, null, null, handle, false);
     }
 
     /**
@@ -131,7 +135,7 @@ public record Envelope(boolean ok,
                 .map(Envelope::neutralizeDiagnostic)
                 .toList();
         return new Envelope(false, verb, manager, null, null, List.copyOf(neutralized),
-                buildSummary, null, null, null, null, null, null, handle, true);
+                buildSummary, null, null, null, null, null, null, null, handle, true);
     }
 
     /**
@@ -151,7 +155,7 @@ public record Envelope(boolean ok,
         List<Finding> neutralized = failures.stream()
                 .map(Envelope::neutralizeFinding)
                 .toList();
-        return new Envelope(false, verb, manager, summary, List.copyOf(neutralized), null, null, null, null, null, null, null, null, handle, true);
+        return new Envelope(false, verb, manager, summary, List.copyOf(neutralized), null, null, null, null, null, null, null, null, null, handle, true);
     }
 
     /**
@@ -167,7 +171,7 @@ public record Envelope(boolean ok,
      */
     public static Envelope gitStatus(String verb, GitStatus status, @Nullable Handle handle) {
         return new Envelope(true, verb, null, null, null, null, null,
-                neutralizeGitStatus(status), null, null, null, null, null, handle, true);
+                neutralizeGitStatus(status), null, null, null, null, null, null, handle, true);
     }
 
     /**
@@ -187,7 +191,7 @@ public record Envelope(boolean ok,
                 .map(Envelope::neutralizeGitCommit)
                 .toList();
         return new Envelope(true, verb, null, null, null, null, null, null,
-                List.copyOf(neutralized), null, null, null, null, null, true);
+                List.copyOf(neutralized), null, null, null, null, null, null, true);
     }
 
     /**
@@ -204,7 +208,7 @@ public record Envelope(boolean ok,
      */
     public static Envelope gitShow(String verb, GitCommitDetail detail, @Nullable Handle handle) {
         return new Envelope(true, verb, null, null, null, null, null, null, null,
-                neutralizeGitCommitDetail(detail), null, null, null, handle, true);
+                neutralizeGitCommitDetail(detail), null, null, null, null, handle, true);
     }
 
     /**
@@ -228,7 +232,7 @@ public record Envelope(boolean ok,
                 .map(Envelope::neutralizeGitDiffEntry)
                 .toList();
         return new Envelope(true, verb, null, null, null, null, null, null, null, null,
-                List.copyOf(neutralized), null, null, handle, true);
+                List.copyOf(neutralized), null, null, null, handle, true);
     }
 
     /**
@@ -252,7 +256,24 @@ public record Envelope(boolean ok,
                 .map(Envelope::neutralizeGitBranchEntry)
                 .toList();
         return new Envelope(true, verb, null, null, null, null, null, null, null, null, null,
-                List.copyOf(neutralized), null, null, true);
+                List.copyOf(neutralized), null, null, null, true);
+    }
+
+    /**
+     * Build a minimal success envelope ({@code ok=true}) for the {@code install} verb (PRD-3,
+     * slice 3). Returns {@code installSummary:{added:N, removed:M, changed:K}} and no
+     * {@code failures[]}. Server-authored content only; marked {@code untrusted=false}.
+     *
+     * @param verb           the verb name ({@code "install"})
+     * @param manager        the manager name ({@code "npm"})
+     * @param installSummary the parsed added/removed/changed counts from npm stdout
+     * @param handle         a handle to the stashed raw npm output; may be null
+     * @return the install-success envelope
+     */
+    public static Envelope installSuccess(String verb, String manager, InstallSummary installSummary,
+                                          @Nullable Handle handle) {
+        return new Envelope(true, verb, manager, null, null, null, null, null, null, null, null, null,
+                installSummary, null, handle, false);
     }
 
     /**
@@ -270,7 +291,7 @@ public record Envelope(boolean ok,
      */
     public static Envelope operationalError(String verb, ErrorCode code, String message, String hint,
                                             @Nullable Handle handle) {
-        return new Envelope(false, verb, null, null, null, null, null, null, null, null, null, null, new OperationalError(code, message, hint), handle, false);
+        return new Envelope(false, verb, null, null, null, null, null, null, null, null, null, null, null, new OperationalError(code, message, hint), handle, false);
     }
 
     // ---- P9 neutralization helpers ----

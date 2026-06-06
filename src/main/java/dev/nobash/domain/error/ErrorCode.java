@@ -90,5 +90,14 @@ public enum ErrorCode {
      * exits non-zero. The hint points the agent at using a valid ref visible in {@code git_log}
      * output (PRD-002, issue #26).
      */
-    COMMIT_NOT_FOUND
+    COMMIT_NOT_FOUND,
+
+    /**
+     * {@code npm install} ran but exited non-zero — a dependency resolution or network failure.
+     * The full npm stderr is retained behind the {@code handle} for {@code get_log} drill-down.
+     * Distinct from {@link #TOOL_NOT_INSTALLED} (npm absent) and {@link #NO_MANAGER_DETECTED}
+     * (no {@code package.json}): this code fires ONLY when npm itself ran and failed (PRD-3,
+     * slice 3).
+     */
+    INSTALL_FAILED
 }
