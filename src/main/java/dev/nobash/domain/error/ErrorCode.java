@@ -99,5 +99,39 @@ public enum ErrorCode {
      * (no {@code package.json}): this code fires ONLY when npm itself ran and failed (PRD-3,
      * slice 3).
      */
-    INSTALL_FAILED
+    INSTALL_FAILED,
+
+    /**
+     * A Node {@code run_tests} preflight found the test-framework binary unresolvable in the
+     * project's {@code node_modules} — e.g. {@code jest} declared in {@code package.json} but
+     * never installed (the {@code node_modules/.bin/jest} launcher is absent). The MCP runs the
+     * framework with {@code --no-install} and NEVER network-fetches a missing framework (D21/D38),
+     * so this is surfaced as an operational error with a hint to run {@code install} — never an
+     * implicit download. Distinct from {@link #TOOL_NOT_INSTALLED} (the {@code npm}/{@code npx}
+     * launcher itself is absent from PATH) and {@link #NO_MANAGER_DETECTED} (no recognized test
+     * framework declared at all): this code fires when the framework IS declared but its dependency
+     * tree was never installed (PRD-3, slice 4).
+     */
+    DEPS_NOT_INSTALLED,
+
+    /**
+     * A Node {@code run_tests} detected a test framework the MCP recognizes for DETECTION but does
+     * not RUN in v1 — {@code vitest} or {@code mocha}. jest is the only Node framework wired to run
+     * (PRD-3, slice 4); the others are detected (so the directory is unambiguously a Node test
+     * project, never {@code NO_MANAGER_DETECTED}) then rejected with this code and a hint that only
+     * jest is supported. Distinct from {@link #DEPS_NOT_INSTALLED} (jest declared but not installed):
+     * here a DIFFERENT, deliberately-unsupported framework is declared.
+     */
+    UNSUPPORTED_TEST_FRAMEWORK,
+
+    /**
+     * A {@code run_tests} structured target selector ({@code targetKind}/{@code target}) was
+     * supplied for an ecosystem that does not (yet) support per-test selection — e.g. a CLASS/METHOD
+     * target on a Node/jest run, which is full-suite only in v1 (PRD-3, slice 4). The target is
+     * WELL-FORMED (so it is NOT {@link #INVALID_TARGET}, which means a malformed selector and
+     * launches no process); it is simply unsupported on this ecosystem. The hint tells the agent to
+     * re-run without a target (full-suite). Distinct from {@link #INVALID_TARGET}: that is a
+     * type-shape failure caught before any launch; this is an honest "not wired for this ecosystem".
+     */
+    UNSUPPORTED_TARGET
 }
