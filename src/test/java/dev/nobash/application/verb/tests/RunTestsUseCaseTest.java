@@ -63,7 +63,12 @@ class RunTestsUseCaseTest {
     }
 
     private RunTestsUseCase useCaseWith(CommandExecutorPort port) {
-        return new RunTestsUseCase(port, new ArgvBuilder(),
+        // Single-adapter list: selection always resolves to Maven here, so AMBIGUOUS_SCOPE never
+        // fires — these tests exercise the INVALID_PATH/NO_MANAGER_DETECTED/TOOL_NOT_INSTALLED/
+        // INVALID_TARGET guard chain, unchanged by the multi-adapter selection refactor.
+        return new RunTestsUseCase(port,
+                java.util.List.of(
+                        new dev.nobash.adapter.out.ecosystem.maven.MavenEcosystemAdapter(port, new ArgvBuilder())),
                 new dev.nobash.application.policy.TestsFlagPolicy(),
                 new dev.nobash.application.runcache.RawOutputStash(),
                 new dev.nobash.infra.concurrency.ModuleLock());

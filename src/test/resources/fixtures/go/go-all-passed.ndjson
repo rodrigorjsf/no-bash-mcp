@@ -1,0 +1,12 @@
+{"Time":"2026-06-05T16:50:00.100000000-03:00","Action":"start","Package":"nbm/greet"}
+{"Time":"2026-06-05T16:50:00.101000000-03:00","Action":"run","Package":"nbm/greet","Test":"TestHello"}
+{"Time":"2026-06-05T16:50:00.101100000-03:00","Action":"output","Package":"nbm/greet","Test":"TestHello","Output":"=== RUN   TestHello\n"}
+{"Time":"2026-06-05T16:50:00.102000000-03:00","Action":"output","Package":"nbm/greet","Test":"TestHello","Output":"--- PASS: TestHello (0.00s)\n"}
+{"Time":"2026-06-05T16:50:00.102100000-03:00","Action":"pass","Package":"nbm/greet","Test":"TestHello","Elapsed":0}
+{"Time":"2026-06-05T16:50:00.103000000-03:00","Action":"run","Package":"nbm/greet","Test":"TestGoodbye"}
+{"Time":"2026-06-05T16:50:00.103100000-03:00","Action":"output","Package":"nbm/greet","Test":"TestGoodbye","Output":"=== RUN   TestGoodbye\n"}
+{"Time":"2026-06-05T16:50:00.104000000-03:00","Action":"output","Package":"nbm/greet","Test":"TestGoodbye","Output":"--- PASS: TestGoodbye (0.00s)\n"}
+{"Time":"2026-06-05T16:50:00.104100000-03:00","Action":"pass","Package":"nbm/greet","Test":"TestGoodbye","Elapsed":0}
+{"Time":"2026-06-05T16:50:00.105000000-03:00","Action":"output","Package":"nbm/greet","Output":"PASS\n"}
+{"Time":"2026-06-05T16:50:00.105500000-03:00","Action":"output","Package":"nbm/greet","Output":"ok  \tnbm/greet\t0.004s\n"}
+{"Time":"2026-06-05T16:50:00.105600000-03:00","Action":"pass","Package":"nbm/greet","Elapsed":0.004}

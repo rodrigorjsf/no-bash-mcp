@@ -1,6 +1,7 @@
 package dev.nobash.adapter.in.mcp;
 
 import dev.nobash.application.verb.build.RunBuildUseCase;
+import dev.nobash.application.verb.install.InstallUseCase;
 import dev.nobash.application.verb.tests.RunTestsUseCase;
 import dev.nobash.domain.envelope.Envelope;
 import io.micronaut.core.annotation.Nullable;
@@ -19,16 +20,19 @@ import java.util.List;
  *   <li>{@code build} — delegates to {@link RunBuildUseCase} (ADR-0009)</li>
  * </ul>
  * Both return the result {@link Envelope} as structured content over the JSON-RPC/STDIO channel.
+ * Also exposes the {@code install} verb, which delegates to {@link InstallUseCase} (PRD-3, slice 3).
  */
 @Singleton
 public class BuildTools {
 
     private final RunTestsUseCase runTests;
     private final RunBuildUseCase runBuild;
+    private final InstallUseCase installUseCase;
 
-    public BuildTools(RunTestsUseCase runTests, RunBuildUseCase runBuild) {
+    public BuildTools(RunTestsUseCase runTests, RunBuildUseCase runBuild, InstallUseCase installUseCase) {
         this.runTests = runTests;
         this.runBuild = runBuild;
+        this.installUseCase = installUseCase;
     }
 
     /**
@@ -83,5 +87,31 @@ public class BuildTools {
             @ToolArg(name = "path", description = "Path to the project directory") @Nullable String path,
             @ToolArg(name = "timeout", description = "Optional timeout in seconds") @Nullable Integer timeout) {
         return runBuild.run(path, timeout);
+    }
+
+    /**
+     * Install Node.js dependencies via {@code npm install} and return a structured result envelope.
+     * A successful install returns a minimal counts payload ({@code manager:"npm",
+     * installSummary:{added:N, removed:M, changed:K}}) with no {@code failures[]} noise.
+     *
+     * <p>The MCP injects {@code --no-audit --no-fund} as controlled server flags. Agent-supplied
+     * flags are vetted by an empty-seed allowlist — all are dropped in v1. Lifecycle hooks run
+     * (no {@code --ignore-scripts}). Failed install → operational error {@code INSTALL_FAILED}
+     * with npm's output retained behind the {@code handle} for {@code get_log}. {@code npm}
+     * absent → {@code TOOL_NOT_INSTALLED}; no {@code package.json} → {@code NO_MANAGER_DETECTED}.</p>
+     *
+     * @param path    the project directory; absent/blank fails closed to {@code INVALID_PATH}
+     * @param flags   agent-supplied flags, vetted against the per-operation allowlist (empty seed)
+     * @param timeout optional timeout in seconds; clamped to the policy cap
+     * @return the result envelope (install-success or operational-error)
+     */
+    @Tool(name = "install", description = "Install Node.js dependencies via npm install and return a "
+            + "structured result envelope. A successful install returns a minimal counts payload. "
+            + "Failed install surfaces INSTALL_FAILED with npm output behind the handle.")
+    public Envelope install(
+            @ToolArg(name = "path", description = "Path to the Node.js project directory") @Nullable String path,
+            @ToolArg(name = "flags", description = "Optional npm flags (allowlisted)") @Nullable List<String> flags,
+            @ToolArg(name = "timeout", description = "Optional timeout in seconds") @Nullable Integer timeout) {
+        return installUseCase.run(path, flags == null ? List.of() : flags, timeout);
     }
 }

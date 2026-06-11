@@ -1,4 +1,4 @@
-package dev.nobash.adapter.out.ecosystem.maven;
+package dev.nobash.adapter.out.ecosystem;
 
 import jakarta.inject.Singleton;
 
@@ -9,16 +9,20 @@ import java.util.List;
 
 /**
  * Resolves a trusted system manager by scanning the configured {@code PATH} for an executable
- * of that name (AC5, ADR-0008). It searches PATH directories only — it never inspects the
- * working directory and never resolves a repo wrapper ({@code ./mvnw}), so the launcher stays
- * outside the agent's control.
+ * of that name (AC5, ADR-0008) — SHARED cross-ecosystem infrastructure (resolves {@code mvn} for
+ * Maven, {@code go} for Go). It searches PATH directories only — it never inspects the working
+ * directory and never resolves a repo wrapper ({@code ./mvnw}), so the launcher stays outside the
+ * agent's control.
+ *
+ * <p>It lives in the NEUTRAL {@code adapter.out.ecosystem} parent package (not under any one
+ * ecosystem sub-package): more than one ecosystem injects it, and the parent package forms no
+ * ArchUnit ecosystem slice, so every adapter may depend on it without a cross-slice violation.</p>
  *
  * <p>On Windows the launcher is a {@code .cmd}/{@code .bat} shim (gotcha G13); the resolver
  * checks the bare name plus those extensions. On POSIX it requires the file to be executable.</p>
  *
- * <p>The no-arg constructor binds to the live {@code PATH} for production DI; the
- * package-visible constructor takes an explicit PATH string for unit testing over a controlled
- * environment.</p>
+ * <p>The no-arg constructor binds to the live {@code PATH} for production DI; the second
+ * constructor takes an explicit PATH string for unit testing over a controlled environment.</p>
  */
 @Singleton
 public class PathScanningManagerResolver implements ManagerPathResolver {
@@ -33,7 +37,11 @@ public class PathScanningManagerResolver implements ManagerPathResolver {
         this(System.getenv("PATH"));
     }
 
-    PathScanningManagerResolver(String pathEnv) {
+    /**
+     * @param pathEnv an explicit {@code PATH}-style string to scan (public so a unit in any package
+     *                can exercise the present/absent branches over a controlled environment)
+     */
+    public PathScanningManagerResolver(String pathEnv) {
         this.pathEnv = pathEnv;
     }
 
