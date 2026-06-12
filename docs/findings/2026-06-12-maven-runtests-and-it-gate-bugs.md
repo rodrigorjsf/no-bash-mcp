@@ -87,6 +87,44 @@ e.g. bind unit vs IT to distinct properties, or run `mvn -B verify -Dsurefire.sk
 Surefire) instead of `-DskipTests`. Verify locally that Failsafe actually executes (`Tests run: N`,
 not `Tests are skipped`).
 
+## Finding 3 — the CI workflow never triggered on `development`
+
+`integration-acceptance.yml` watched `branches: [master, main, develop]`. The repo's integration
+base is **`development`** (and default `master`); `main`/`develop` never existed. So PRs targeting
+`development` — the actual integration flow — never triggered the gate at all (a third reason it
+went unverified). Fixed to watch `master` + `development` (+ `slice-*`/`orchestrate/**` for push).
+
+## Finding 4 — git_status / git_branch fail the MCP outputSchema for any repo without an upstream
+
+Surfaced the moment Finding 2 made the gate actually run the Inspector ITs in CI:
+`GitInspectorAcceptanceIT` failed `git_status` (dirty repo) and `git_branch` with `ok` not true.
+Reproduced locally (dev box, git 2.43) — **not** CI-specific:
+
+```
+git_status -> isError: true
+  "structuredContent does not match tool outputSchema:
+   /gitStatus/ahead: null found, integer expected
+   /gitStatus/behind: null found, integer expected
+   /gitStatus/upstream: null found, string expected"
+```
+
+The `GitStatus` **domain** record is correct — `ahead`/`behind` are boxed `@Nullable Integer`,
+`upstream` is `@Nullable String`, all deliberately null when the branch has no upstream tracking
+(the common local-repo case). But the generated **MCP `@JsonSchema` outputSchema** declares them
+non-nullable (`integer`/`string`), so the framework's structuredContent validation rejects the
+envelope → `isError: true`. So git_status/git_branch are broken for **any repo without an upstream
+remote** — i.e. most local repos.
+
+Triple-masked until now: (a) the no-op gate (Finding 2) never ran the IT; (b) unit tests never
+exercise the framework's outputSchema validation (only the domain serde); (c) the IT self-skips
+locally without the MCP Inspector (`npx`). This is a real PRD-2 product bug in a different verb,
+exposed — not caused — by the gate fix.
+
+**Candidate fix:** make the generated outputSchema honor the nullable header fields (the
+`@JsonSchema` processor does not treat Micronaut `@Nullable` as schema-nullable for nested records);
+mirror however the `Finding`/`SourceRef` nullable fields (ADR-0007) are made schema-nullable. Owns
+its own slice/issue — distinct domain from the Maven/CI fixes here.
+
 ## Impact on PRD-4 S1 (#59)
 #59's native acceptance IT Maven leg ("ProcessBuilder spawns a real `mvn` test and returns
 normalized Findings") **cannot be made green** for a passing/failing Maven project until Finding 1
