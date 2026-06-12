@@ -1,0 +1,117 @@
+##
+## native-acceptance.yml — PRD-4 S1 (#59): the linux-x64 native release gate.
+##
+## Builds the production server to a `--static-nolibc` GraalVM native binary via the single AC flag
+## `-Dpackaging=native-image` (the micronaut-maven-plugin delegates to native-build-tools; the
+## auto-activated `native` profile supplies the static-link buildArgs and sets nbm.native.required=true),
+## then drives that binary end-to-end through NativeAcceptanceIT — the FAIL-CLOSED release gate:
+## a missing binary or a missing per-leg toolchain HARD-FAILS the build (never a silent skip).
+##
+## The IT's four legs each spawn a REAL subprocess from the native image:
+##   - Maven  : `mvn` on a failing fixture        → ok=false, kind="test"
+##   - Go     : `go test` on a failing fixture     → ok=false, kind="test"
+##   - Go     : `go test` on a build-fail fixture  → ok=false, kind="container" (ContainerFinding)
+##   - npm    : `npx jest --no-install`            → ok=false, kind="test", manager="npx"
+## plus a stdout-purity assertion (§7) while a subprocess forks. The verified binary is uploaded as
+## a named artifact (no-bash-mcp-linux-x64).
+##
+## This is a SEPARATE workflow from integration-acceptance.yml (the JVM jar gate) because the native
+## build is slow (~3 min); it still runs on every PR to the integration branches so a regression in
+## the native form blocks the merge.
+##
+name: Native Acceptance (linux-x64)
+
+on:
+  push:
+    branches: [ "master", "development" ]
+    paths:
+      - "src/**"
+      - "pom.xml"
+      - ".github/workflows/native-acceptance.yml"
+  pull_request:
+    branches: [ "master", "development" ]
+    paths:
+      - "src/**"
+      - "pom.xml"
+      - ".github/workflows/native-acceptance.yml"
+  workflow_dispatch: {}
+
+jobs:
+  native-acceptance:
+    name: native --static-nolibc build + acceptance IT (linux-x64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. GraalVM CE 25 (JDK 25) with native-image ───────────────────────
+      - name: Set up GraalVM CE 25
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: "25"
+          distribution: graalvm-community
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache: maven
+
+      # ── 3. zlib static lib — REQUIRED by --static-nolibc (needs libz.a) ────
+      - name: Install zlib1g-dev (libz.a for --static-nolibc)
+        run: sudo apt-get update && sudo apt-get install -y zlib1g-dev
+
+      # ── 4. Go toolchain (the two Go legs spawn `go test`) ─────────────────
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      # ── 5. Node.js 22 LTS (the npm leg spawns `npx jest`) ─────────────────
+      - name: Set up Node.js 22 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # ── 6. Tooling sanity (fail early, before the 3-min native build) ─────
+      - name: Verify jq / mvn / go / node
+        run: |
+          jq --version
+          mvn --version
+          go version
+          node --version
+
+      # ── 7. Provision the jest project out-of-band (the --no-install invariant) ──
+      # run_tests runs jest with --no-install and never fetches; node_modules must exist BEFORE the
+      # IT. We install the committed fixture and hand its absolute path to the IT. A failure here is
+      # a real gate failure (the npm leg HARD-FAILS if node_modules/.bin/jest is absent under native).
+      - name: Install the jest acceptance fixture (npm install)
+        working-directory: src/test/resources/fixtures/jest/project
+        run: npm install --no-audit --no-fund
+
+      # ── 8. Build the native binary AND run the fail-closed acceptance gate ─
+      # `-Dpackaging=native-image` flips the lifecycle (jar → native image) and auto-activates the
+      # `native` profile (static-link buildArgs + nbm.native.required=true). `verify` runs the unit
+      # suite, the native build, then Failsafe — where NativeAcceptanceIT drives the binary. A red IT
+      # blocks the build (the release gate). The jest dir is passed as an absolute path.
+      - name: Build native + run NativeAcceptanceIT (release gate)
+        run: |
+          mvn -B -Dpackaging=native-image \
+            -Dnbm.it.jest.project.dir="$GITHUB_WORKSPACE/src/test/resources/fixtures/jest/project" \
+            verify
+
+      # ── 9. Strip + publish the verified binary as a named artifact ────────
+      - name: Strip the native binary
+        run: strip target/no-bash-mcp
+
+      - name: Verify static linking (ldd → libc + ld-linux only)
+        run: |
+          file target/no-bash-mcp
+          ldd target/no-bash-mcp || true
+
+      - name: Upload linux-x64 native binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: no-bash-mcp-linux-x64
+          path: target/no-bash-mcp
+          if-no-files-found: error
+          retention-days: 14

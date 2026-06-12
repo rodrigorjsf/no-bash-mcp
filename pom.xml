@@ -5,7 +5,10 @@
   <groupId>dev.nobash</groupId>
   <artifactId>no-bash-mcp</artifactId>
   <version>0.1.0-SNAPSHOT</version>
-  <packaging>jar</packaging>
+  <!-- Property-driven so `-Dpackaging=native-image` flips the lifecycle to a GraalVM native
+       image without editing the pom (PRD-4 S1 / #59). Defaults to `jar` (the property below);
+       the JVM build, tests, and the existing Inspector ITs are unaffected. -->
+  <packaging>${packaging}</packaging>
 
   <parent>
     <groupId>io.micronaut.platform</groupId>
@@ -14,6 +17,13 @@
   </parent>
 
   <properties>
+    <!-- Default packaging. `-Dpackaging=native-image` overrides it to trigger the GraalVM
+         native build via micronaut-maven-plugin (which delegates to native-build-tools). -->
+    <packaging>jar</packaging>
+    <!-- Fail-closed gate for the native acceptance IT. Default false → NativeAcceptanceIT
+         self-skips on the JVM build (no binary present). The `native` profile sets it true so
+         the IT HARD-FAILS if the binary is absent — never a silent green (G5/D28). -->
+    <nbm.native.required>false</nbm.native.required>
     <jdk.version>25</jdk.version>
     <release.version>25</release.version>
     <micronaut.version>5.0.2</micronaut.version>
@@ -126,6 +136,20 @@
   <build>
     <plugins>
       <plugin>
+        <!-- The micronaut-maven-plugin (extensions inherited from micronaut-parent 5.0.2) is the
+             enabler for `-Dpackaging=native-image`: it registers the native-image packaging type
+             and delegates to native-build-tools. Inert under the default `jar` packaging.
+             configurationValidation is disabled — this is a CLI MCP server with no datasources/DI
+             surface for the validator to check (mirrors the s2 spike). -->
+        <groupId>io.micronaut.maven</groupId>
+        <artifactId>micronaut-maven-plugin</artifactId>
+        <configuration>
+          <configurationValidation>
+            <enabled>false</enabled>
+          </configurationValidation>
+        </configuration>
+      </plugin>
+      <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-enforcer-plugin</artifactId>
         <!-- The inherited micronaut-enforce execution registers the checkSnakeYaml rule,
@@ -235,9 +259,13 @@
               <goal>verify</goal>
             </goals>
             <configuration>
-              <!-- Pass the project build directory so the IT can locate the packaged jar -->
+              <!-- Pass the project build directory so the IT can locate the packaged jar (and the
+                   native binary). nbm.native.required is false on the JVM build and true under the
+                   `native` profile — it tells NativeAcceptanceIT whether a missing binary is a
+                   self-skip (JVM build) or a hard failure (native release gate). -->
               <systemPropertyVariables>
                 <project.build.directory>${project.build.directory}</project.build.directory>
+                <nbm.native.required>${nbm.native.required}</nbm.native.required>
               </systemPropertyVariables>
             </configuration>
           </execution>
@@ -245,5 +273,56 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!-- ========================================================================================
+         PRD-4 S1 (#59) native release form. AUTO-ACTIVATED by `-Dpackaging=native-image` so a
+         single flag both flips the lifecycle (micronaut-maven-plugin → native-build-tools) AND
+         applies the static-link buildArgs + the fail-closed acceptance gate. No second `-Pnative`
+         flag is needed; the AC names `mvn -Dpackaging=native-image ...`.
+
+         buildArgs (proven by #58 on linux-x64, GraalVM CE 25.0.2 JDK-25):
+           static-nolibc  mostly-static (glibc dynamic, libz et al. static); needs zlib1g-dev →
+                          libz.a. DESIGN.md §8 portability mandate.
+           no-fallback    fail the build rather than emit a JVM-fallback image.
+           UTF-8 file/jnu keep stdout pure-JSON on hosts with a non-UTF-8 default charset.
+         metadataRepository auto-fetches library metadata; the logback ConsoleAppender.setTarget
+         reflection gap is shipped under src/main/resources/META-INF/native-image/ (a build input,
+         not auto-covered). No -H:+SharedArenaSupport: the STDIO runtime is Netty-free. ========== -->
+    <profile>
+      <id>native</id>
+      <activation>
+        <property>
+          <name>packaging</name>
+          <value>native-image</value>
+        </property>
+      </activation>
+      <properties>
+        <!-- Under native packaging the binary MUST exist; a missing binary is a hard failure in
+             NativeAcceptanceIT, not a self-skip (anti-false-green: this IT is the release gate). -->
+        <nbm.native.required>true</nbm.native.required>
+      </properties>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.graalvm.buildtools</groupId>
+            <artifactId>native-maven-plugin</artifactId>
+            <configuration>
+              <imageName>no-bash-mcp</imageName>
+              <buildArgs>
+                <buildArg>--static-nolibc</buildArg>
+                <buildArg>--no-fallback</buildArg>
+                <buildArg>-Dfile.encoding=UTF-8</buildArg>
+                <buildArg>-Dsun.jnu.encoding=UTF-8</buildArg>
+              </buildArgs>
+              <metadataRepository>
+                <enabled>true</enabled>
+              </metadataRepository>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 
 </project>
