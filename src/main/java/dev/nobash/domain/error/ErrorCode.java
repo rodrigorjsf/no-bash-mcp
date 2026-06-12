@@ -38,6 +38,16 @@ public enum ErrorCode {
     REPORT_NOT_PRODUCED,
 
     /**
+     * The Maven adapter could not prepare a fresh Surefire reports directory before exec — the
+     * pre-run wipe of {@code <module>/target/surefire-reports} (the D27 freshness guard) failed
+     * on an undeletable entry (a read-only parent dir, a root-owned file from a prior
+     * containerized {@code mvn} run, or a read-only mount). The verb fails closed with a
+     * structured operational error — never a thrown exception — so the Envelope contract holds;
+     * the hint points the agent at the unwritable directory. No test process is launched.
+     */
+    REPORT_DIR_UNWRITABLE,
+
+    /**
      * A fresh report exists but {@code executedTests == 0} — no test actually ran (an empty
      * leaf module, an all-{@code @Disabled} suite, or no test matched) and exit was 0 (D29).
      * The positive-evidence floor: distinct from {@link #REPORT_NOT_PRODUCED} (no report at

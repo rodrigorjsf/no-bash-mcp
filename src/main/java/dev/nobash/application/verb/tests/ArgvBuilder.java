@@ -23,9 +23,6 @@ public class ArgvBuilder {
     private static final String MANAGER = "mvn";
     private static final List<String> BASE = List.of("-B", "test");
 
-    /** The MCP-controlled report-freshness flag prefix (D27). Never an agent free-flag. */
-    public static final String REPORTS_DIR_FLAG = "-Dsurefire.reportsDirectory=";
-
     /**
      * The MCP-controlled test-selector flag prefix (issue #9). Never an agent free-flag — the
      * agent supplies a structured {@link TestTarget} via typed {@code @ToolArg}s; the MCP
@@ -44,45 +41,42 @@ public class ArgvBuilder {
     }
 
     /**
-     * Build the full execution spec for a run, injecting the MCP-controlled
-     * {@code -Dsurefire.reportsDirectory=<freshReportsDir>} flag (D27) and the module working
-     * directory. The reports-dir flag is appended by the MCP <em>after</em> the vetted flags —
-     * it is an MCP-injected value, not agent input (the agent's own
-     * {@code -Dsurefire.reportsDirectory} / {@code -D*} flags are dropped by the allowlist before
-     * they ever reach here), so report freshness is guaranteed by construction (AC10).
+     * Build the full execution spec for a run in the given module working directory.
      *
-     * @param vettedFlags     flags already filtered through the allowlist (never raw agent input)
-     * @param freshReportsDir the unique, empty-before-exec reports directory (MCP-controlled)
-     * @param workingDir      the module directory the manager runs in
-     * @param timeoutSeconds  the already-clamped hard deadline the executor enforces (issue #6)
+     * <p>Report freshness (D27) is NOT achieved by a {@code -Dsurefire.reportsDirectory} flag —
+     * that is not a Surefire user-property and is silently ignored (Surefire always writes the
+     * default {@code <module>/target/surefire-reports}). Freshness is the Maven adapter's job: it
+     * reads that default directory after wiping it pre-exec. The agent's own
+     * {@code -Dsurefire.reportsDirectory} / {@code -D*} flags never reach here regardless — the
+     * allowlist drops them, so the agent cannot redirect or smuggle a reports directory.</p>
+     *
+     * @param vettedFlags    flags already filtered through the allowlist (never raw agent input)
+     * @param workingDir     the module directory the manager runs in
+     * @param timeoutSeconds the already-clamped hard deadline the executor enforces (issue #6)
      * @return the {@link ExecSpec} to hand to the executor seam
      */
-    public ExecSpec buildTestArgv(List<String> vettedFlags, String freshReportsDir, String workingDir,
-                                  int timeoutSeconds) {
-        return buildTestArgv(vettedFlags, freshReportsDir, workingDir, timeoutSeconds, null);
+    public ExecSpec buildTestArgv(List<String> vettedFlags, String workingDir, int timeoutSeconds) {
+        return buildTestArgv(vettedFlags, workingDir, timeoutSeconds, null);
     }
 
     /**
-     * Build the full execution spec for a targeted run, injecting both the MCP-controlled
-     * {@code -Dsurefire.reportsDirectory=<freshReportsDir>} flag (D27) and, when a target is
-     * present, the MCP-controlled {@code -Dtest=<value>} flag (issue #9). Both are MCP-injected
-     * controlled values — never agent free-flags. The target is injected BEFORE the reports-dir
-     * flag so the argv order is deterministic and predictable.
+     * Build the full execution spec for a targeted run, injecting the MCP-controlled
+     * {@code -Dtest=<value>} flag (issue #9) when a target is present. The target is an
+     * MCP-injected controlled value — never an agent free-flag (the agent's own {@code -Dtest=}
+     * is dropped by the allowlist before it reaches here).
      *
-     * @param vettedFlags     flags already filtered through the allowlist (never raw agent input)
-     * @param freshReportsDir the unique, empty-before-exec reports directory (MCP-controlled)
-     * @param workingDir      the module directory the manager runs in
-     * @param timeoutSeconds  the already-clamped hard deadline the executor enforces (issue #6)
-     * @param target          an optional, already-validated structured target; {@code null} → full suite
+     * @param vettedFlags    flags already filtered through the allowlist (never raw agent input)
+     * @param workingDir     the module directory the manager runs in
+     * @param timeoutSeconds the already-clamped hard deadline the executor enforces (issue #6)
+     * @param target         an optional, already-validated structured target; {@code null} → full suite
      * @return the {@link ExecSpec} to hand to the executor seam
      */
-    public ExecSpec buildTestArgv(List<String> vettedFlags, String freshReportsDir, String workingDir,
-                                  int timeoutSeconds, @Nullable TestTarget target) {
+    public ExecSpec buildTestArgv(List<String> vettedFlags, String workingDir, int timeoutSeconds,
+                                  @Nullable TestTarget target) {
         List<String> argv = baseArgv(vettedFlags);
         if (target != null) {
             argv.add(target.toArgvToken());
         }
-        argv.add(REPORTS_DIR_FLAG + freshReportsDir);
         return new ExecSpec(argv, workingDir, timeoutSeconds);
     }
 

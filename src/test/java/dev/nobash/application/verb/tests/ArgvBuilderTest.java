@@ -71,29 +71,28 @@ class ArgvBuilderTest {
     class structured_target_injection_issue_9 {
 
         @Test
-        void a_CLASS_target_injects_dtest_before_the_reports_dir_token() throws Exception {
+        void a_CLASS_target_injects_a_single_dtest_token_after_the_base_invocation() throws Exception {
             TestTarget target = TestTarget.parse("CLASS", "FooTest");
-            ExecSpec spec = builder.buildTestArgv(List.of(), "/tmp/reports", "/tmp/module", 600, target);
+            ExecSpec spec = builder.buildTestArgv(List.of(), "/tmp/module", 600, target);
 
-            // -Dtest= MUST be present and appear BEFORE the reports-dir token.
-            assertThat(spec.argv()).contains("-Dtest=FooTest");
-            assertThat(spec.argv()).contains("-Dsurefire.reportsDirectory=/tmp/reports");
-            int testIdx = spec.argv().indexOf("-Dtest=FooTest");
-            int reportsIdx = spec.argv().indexOf("-Dsurefire.reportsDirectory=/tmp/reports");
-            assertThat(testIdx).as("-Dtest must appear before -Dsurefire.reportsDirectory").isLessThan(reportsIdx);
+            // -Dtest= MUST be present, after the base [mvn, -B, test] invocation. There is no
+            // reports-dir token (Surefire ignores -Dsurefire.reportsDirectory; the adapter reads
+            // the default dir instead).
+            assertThat(spec.argv()).containsExactly("mvn", "-B", "test", "-Dtest=FooTest");
+            assertThat(spec.argv()).noneMatch(a -> a.startsWith("-Dsurefire.reportsDirectory="));
         }
 
         @Test
         void a_METHOD_target_injects_the_hash_form() throws Exception {
             TestTarget target = TestTarget.parse("METHOD", "FooTest#testBar");
-            ExecSpec spec = builder.buildTestArgv(List.of(), "/tmp/reports", "/tmp/module", 600, target);
+            ExecSpec spec = builder.buildTestArgv(List.of(), "/tmp/module", 600, target);
 
             assertThat(spec.argv()).contains("-Dtest=FooTest#testBar");
         }
 
         @Test
         void a_null_target_produces_no_dtest_token() {
-            ExecSpec spec = builder.buildTestArgv(List.of(), "/tmp/reports", "/tmp/module", 600, null);
+            ExecSpec spec = builder.buildTestArgv(List.of(), "/tmp/module", 600, null);
 
             assertThat(spec.argv()).noneMatch(a -> a.startsWith("-Dtest="));
         }
@@ -101,7 +100,7 @@ class ArgvBuilderTest {
         @Test
         void a_CLASS_target_produces_exactly_one_dtest_token() throws Exception {
             TestTarget target = TestTarget.parse("CLASS", "com.example.BarTest");
-            ExecSpec spec = builder.buildTestArgv(List.of(), "/tmp/reports", "/tmp/module", 600, target);
+            ExecSpec spec = builder.buildTestArgv(List.of(), "/tmp/module", 600, target);
 
             long count = spec.argv().stream().filter(a -> a.startsWith("-Dtest=")).count();
             assertThat(count).as("exactly one -Dtest= token").isEqualTo(1);
