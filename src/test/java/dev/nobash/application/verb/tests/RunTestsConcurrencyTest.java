@@ -295,12 +295,9 @@ class RunTestsConcurrencyTest {
         }
     }
 
-    /** Write a real PASSED Surefire report into the spec's MCP-injected reports dir. */
+    /** Write a real PASSED Surefire report into the spec's default reports dir (target/surefire-reports). */
     private static void writePassedReport(ExecSpec spec) {
-        String token = spec.argv().stream()
-                .filter(a -> a.startsWith("-Dsurefire.reportsDirectory="))
-                .findFirst().orElseThrow(() -> new AssertionError("no reportsDirectory injected"));
-        Path dir = Path.of(token.substring("-Dsurefire.reportsDirectory=".length()));
+        Path dir = Path.of(spec.workingDir()).resolve("target").resolve("surefire-reports");
         try {
             Files.createDirectories(dir);
             byte[] xml;

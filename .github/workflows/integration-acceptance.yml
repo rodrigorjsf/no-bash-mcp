@@ -23,17 +23,21 @@
 name: MCP Inspector Acceptance (IT)
 
 on:
+  # The repo's integration base is `development` and its default branch is `master`. The earlier
+  # `develop`/`main` names never existed here, so this gate never triggered on `development` PRs —
+  # part of why the acceptance suite went unverified. Watch the branches that actually exist.
   push:
-    branches: [ "master", "main", "develop", "slice-*" ]
+    branches: [ "master", "development", "slice-*", "orchestrate/**" ]
     paths:
       - "src/**"
       - "pom.xml"
       - ".github/workflows/integration-acceptance.yml"
   pull_request:
-    branches: [ "master", "main", "develop" ]
+    branches: [ "master", "development" ]
     paths:
       - "src/**"
       - "pom.xml"
+      - ".github/workflows/integration-acceptance.yml"
   workflow_dispatch: {}
 
 jobs:
@@ -79,25 +83,19 @@ jobs:
       - name: Verify mvn
         run: mvn --version
 
-      # ── 7. Run unit tests (warms ~/.m2) ───────────────────────────────────
-      # The Maven `setup-java` action with `cache: maven` restores and saves ~/.m2 across
-      # pushes. Running `mvn test` here both (a) verifies the 152 unit tests stay green and
-      # (b) resolves the project's Maven dependencies into the local repo, so the IT's
-      # fixture Maven projects (which use standard JUnit 5 from Maven Central) do not need
-      # a live network fetch.
-      - name: Unit tests (warms ~/.m2 + verifies 152 green)
-        run: mvn -B test
-
-      # ── 8. Package the JVM jar ────────────────────────────────────────────
-      # `mvn -DskipTests package` compiles the project (including *IT.java test sources) and
-      # produces no-bash-mcp-0.1.0-SNAPSHOT.jar in target/. The Failsafe IT locates this jar
-      # via the `project.build.directory` system property injected by the Failsafe plugin config.
-      - name: Package (JVM jar, skip tests)
-        run: mvn -B -DskipTests package
-
-      # ── 9. Run Failsafe ITs (Inspector --cli acceptance) ──────────────────
-      # `mvn verify -DskipTests` skips Surefire unit tests (already ran in step 7) but runs
-      # Failsafe integration tests via the integration-test/verify lifecycle. This is the
-      # acceptance gate: Inspector --cli against the packaged jar, three envelope assertions.
-      - name: Failsafe integration tests (Inspector --cli acceptance)
-        run: mvn -B verify -DskipTests
+      # ── 7. Unit tests + JVM jar + Failsafe acceptance ITs (one lifecycle) ─
+      # `mvn -B verify` runs the whole lifecycle in dependency order: Surefire unit tests (test),
+      # the JVM jar (package), then the Failsafe integration tests (integration-test/verify).
+      #
+      # It MUST be the `verify` PHASE, not `-DskipTests` and not bare Failsafe goals:
+      #   - `verify -DskipTests` would skip the ITs too — `skipTests` is shared by Surefire AND
+      #     Failsafe — turning this gate into a silent no-op (the IT classes compile but never run).
+      #   - `failsafe:integration-test` as a direct CLI goal binds to the `default-cli` execution,
+      #     which does NOT inherit the pom's `<execution>`-scoped `<systemPropertyVariables>`, so
+      #     `project.build.directory` is null and every Inspector --cli IT self-skips ("run via
+      #     mvn verify, not directly") — a silent green for the very suite this gate exists to run.
+      # The bound `verify` phase applies the Failsafe execution config, so `project.build.directory`
+      # is injected and the Inspector ITs locate the packaged jar and actually execute. A failing IT
+      # fails the build; ITs whose external prerequisites are absent self-skip (assumeTrue).
+      - name: Unit tests + JVM jar + Failsafe acceptance ITs (mvn verify)
+        run: mvn -B verify

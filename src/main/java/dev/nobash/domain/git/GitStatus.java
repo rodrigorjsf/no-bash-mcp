@@ -1,5 +1,6 @@
 package dev.nobash.domain.git;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import io.micronaut.core.annotation.Introspected;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.serde.annotation.Serdeable;
@@ -47,6 +48,12 @@ import java.util.List;
  * @param unstaged  paths with worktree (unstaged) changes; empty when none
  * @param untracked untracked paths ({@code ?} lines); empty when none
  */
+// Omit null header fields (branch/upstream/ahead/behind) from serialization so they are ABSENT
+// rather than rendered as `null`. The generated MCP @JsonSchema outputSchema types these as
+// integer/string (it does not express nullable for @Nullable components), so a rendered `null`
+// fails the framework's structuredContent validation (isError). They are not `required`, so
+// absence is valid and preserves the "no upstream" semantic (absent, never a misleading 0).
+@JsonInclude(JsonInclude.Include.NON_NULL)
 @Serdeable
 @Introspected
 public record GitStatus(

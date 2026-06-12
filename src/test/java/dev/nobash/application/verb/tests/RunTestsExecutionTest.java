@@ -12,6 +12,7 @@ import dev.nobash.domain.result.TestFinding;
 import io.micronaut.test.annotation.MockBean;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import jakarta.inject.Inject;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayNameGeneration;
 import org.junit.jupiter.api.DisplayNameGenerator;
 import org.junit.jupiter.api.Test;
@@ -19,8 +20,10 @@ import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mockito;
 import org.mockito.stubbing.Answer;
 
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -61,12 +64,14 @@ class RunTestsExecutionTest {
         return m;
     }
 
-    /** The MCP-injected reports directory is whatever value the use-case put in the ExecSpec. */
+    /**
+     * The reports directory the adapter reads is Surefire's default {@code <module>/target/
+     * surefire-reports} (derived from the ExecSpec working directory) — Surefire ignores the
+     * {@code -Dsurefire.reportsDirectory} flag, so the adapter reads the default dir and the mock
+     * writes the fixture XML there, exactly modelling a real Surefire run.
+     */
     private Path injectedReportsDir(ExecSpec spec) {
-        String token = spec.argv().stream()
-                .filter(a -> a.startsWith("-Dsurefire.reportsDirectory="))
-                .findFirst().orElseThrow(() -> new AssertionError("no reportsDirectory was injected"));
-        return Path.of(token.substring("-Dsurefire.reportsDirectory=".length()));
+        return Path.of(spec.workingDir()).resolve("target").resolve("surefire-reports");
     }
 
     /** Stub execute() to write the given fixture bytes into the injected dir and return exit. */
@@ -289,24 +294,70 @@ class RunTestsExecutionTest {
         assertThat(detail).as("the failing test's detail is retained behind the handle").isNotNull();
     }
 
-    // ---- AC10 — the reportsDirectory token is MCP-injected and an agent flag cannot supply it ----
+    // ---- AC10 — an agent cannot redirect the reports directory nor smuggle skip flags ----
     @Test
-    void the_reports_directory_is_mcp_injected_and_not_droppable_agent_input(@TempDir Path dir) throws Exception {
+    void an_agent_cannot_redirect_the_reports_directory_or_smuggle_skip_flags(@TempDir Path dir) throws Exception {
         mavenProject(dir);
         stubExec(0, "", "fixtures/maven/surefire-all-passed.xml");
 
-        // The agent tries to smuggle its own reportsDirectory (and -DskipTests) via flags.
+        // The agent tries to redirect reports to its own dir AND to defeat the verb.
         useCase.run(dir.toString(),
                 List.of("-Dsurefire.reportsDirectory=/tmp/agent-controlled", "-DskipTests"), null);
 
         ExecSpec spec = capturedSpec.get();
-        List<String> reportDirTokens = spec.argv().stream()
-                .filter(a -> a.startsWith("-Dsurefire.reportsDirectory=")).toList();
-        // Exactly ONE reportsDirectory token, and it is NOT the agent's value (the agent flag was
-        // dropped by the allowlist; the MCP appended its own fresh-tmp value).
-        assertThat(reportDirTokens).hasSize(1);
-        assertThat(reportDirTokens.get(0)).doesNotContain("/tmp/agent-controlled");
+        // Both flags are dropped by the allowlist — neither reaches the argv. The reports directory
+        // is the module's own default target/surefire-reports (derived from the working dir, never
+        // from a flag), so the agent has no lever to redirect where results are read from.
+        assertThat(spec.argv()).noneMatch(a -> a.startsWith("-Dsurefire.reportsDirectory="));
         assertThat(spec.argv()).doesNotContain("-DskipTests");
+    }
+
+    // ---- D27 — the pre-exec wipe removes a STALE report so it cannot bleed into this run ----
+    @Test
+    void a_stale_report_from_a_prior_run_is_wiped_and_does_not_bleed_into_this_run(@TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        // Seed a STALE FAILED report from a hypothetical prior run, in the default reports dir.
+        Path reportsDir = dir.resolve("target").resolve("surefire-reports");
+        Files.createDirectories(reportsDir);
+        Files.write(reportsDir.resolve("TEST-stale.xml"),
+                readBytes("fixtures/maven/surefire-normal-error-failure-skipped.xml"));
+        // This run produces ONLY a fresh PASSED report (a different filename).
+        stubExec(0, "", "fixtures/maven/surefire-all-passed.xml");
+
+        Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+        // If the pre-exec wipe did NOT fire, the stale FAILED report would be read alongside the
+        // fresh PASSED one and ok would be false. ok=true PROVES the stale report was wiped (D27).
+        assertThat(env.ok()).as("the stale prior-run report must be wiped before this run (D27)").isTrue();
+        assertThat(env.failures()).as("no failure should bleed in from the wiped stale report").isNull();
+    }
+
+    // ---- the pre-exec wipe failure fails CLOSED with an envelope, never a thrown exception ----
+    @Test
+    void an_unwritable_reports_dir_returns_a_structured_operational_error_not_a_throw(@TempDir Path dir) throws Exception {
+        Assumptions.assumeTrue(
+                FileSystems.getDefault().supportedFileAttributeViews().contains("posix"),
+                "SKIPPED: needs POSIX permissions to make the reports dir undeletable");
+        mavenProject(dir);
+        // The inert preflight no-op runs but writes nothing; interpret short-circuits on the
+        // preflight decision, so a non-writing stub avoids a spurious write into the read-only dir.
+        stubEmpty(0, "");
+        // A read-only reports dir whose child cannot be deleted (a file from a prior containerized
+        // run, a read-only mount). Restored in finally so @TempDir cleanup succeeds.
+        Path reportsDir = dir.resolve("target").resolve("surefire-reports");
+        Files.createDirectories(reportsDir);
+        Files.write(reportsDir.resolve("locked.xml"), readBytes("fixtures/maven/surefire-all-passed.xml"));
+        Files.setPosixFilePermissions(reportsDir, PosixFilePermissions.fromString("r-xr-xr-x"));
+        try {
+            // Must NOT throw — the verb returns a structured operational error envelope.
+            Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+            assertThat(env.ok()).isFalse();
+            assertThat(env.error()).as("the wipe failure must surface as an operational error").isNotNull();
+            assertThat(env.error().code()).isEqualTo(ErrorCode.REPORT_DIR_UNWRITABLE);
+        } finally {
+            Files.setPosixFilePermissions(reportsDir, PosixFilePermissions.fromString("rwxr-xr-x"));
+        }
     }
 
     // ---- issue #6 fixture (f) — timeout mid-run leaving fresh PASSED partials → TIMEOUT, ok=false ----
