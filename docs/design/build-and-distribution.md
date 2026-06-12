@@ -1,5 +1,14 @@
 # Build & Distribution
 
+> **PRD split (decision-log D53).** This document spans two PRDs. **Building & hardening** the native
+> binary of the real server (the sections through *Platform matrix* + *Signing*) is **PRD-4** — it
+> proves the binary across the 4-tuple matrix and emits the signed binaries as CI artifacts.
+> **Delivering** it (the *npm/npx launcher*, *topology*, *version pin*, *provenance*, *footprint*
+> sections) is **PRD-5**, which consumes PRD-4's artifacts. Ad-hoc `darwin-arm64` signing sits in
+> **PRD-4** (it is a prerequisite for *verifying* the darwin tuple — an unsigned arm64 binary is
+> SIGKILLed; D54). `--static-nolibc` is a **linux-only** criterion; darwin/win ship system-dynamic
+> (D55). ADR-0010 remains the channel's authority, now owned by PRD-5.
+
 ## Baseline
 
 - **Micronaut 5.0.0**, **Java 25** baseline, build with **Maven**.
@@ -32,8 +41,11 @@ The reasons that **do** apply:
   (linux / macos / windows × arch), not a single artifact. See gotcha **G3**. The v1 matrix is pinned
   to four tuples below (it is dictated by the GraalVM JDK-25 toolchain, not a judgement call).
 - Mitigation: **Micronaut is AOT-native by design** (reflection/resource config generated at
-  compile time), so the classic native-config pain is low. `ProcessBuilder` subprocess spawning
-  works in native with no special configuration.
+  compile time), so the classic native-config pain is low. **`ProcessBuilder` subprocess spawning in a
+  native image is a PRD-4 native-proof obligation, not an assumed fact** (decision-log **D55**): the s2
+  spike's `PingTool` never spawned a subprocess, yet subprocess spawning is the entire product mechanic
+  — so PRD-4's native acceptance IT must drive a real `mvn`/`go`/`npm` spawn *through the binary*,
+  capturing any reachability/resource metadata it needs.
 
 ## Positioning
 
