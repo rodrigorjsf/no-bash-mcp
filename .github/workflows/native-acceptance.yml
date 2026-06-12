@@ -93,9 +93,15 @@ jobs:
       # `native` profile (static-link buildArgs + nbm.native.required=true). `verify` runs the unit
       # suite, the native build, then Failsafe — where NativeAcceptanceIT drives the binary. A red IT
       # blocks the build (the release gate). The jest dir is passed as an absolute path.
+      # `-Dnbm.native.required=true` is passed EXPLICITLY (belt-and-suspenders over the `native`
+      # profile that also sets it): it forwards to the forked Failsafe JVM and guarantees the gate is
+      # armed. Without it, a regression in the profile→systemPropertyVariables binding would let the
+      # IT read `false`, `gate()` would `assumeTrue(false)`, and the WHOLE class would silently skip —
+      # a green build that ran zero legs. With it, a missing binary/toolchain HARD-FAILS instead.
       - name: Build native + run NativeAcceptanceIT (release gate)
         run: |
           mvn -B -Dpackaging=native-image \
+            -Dnbm.native.required=true \
             -Dnbm.it.jest.project.dir="$GITHUB_WORKSPACE/src/test/resources/fixtures/jest/project" \
             verify
 
@@ -103,10 +109,16 @@ jobs:
       - name: Strip the native binary
         run: strip target/no-bash-mcp
 
-      - name: Verify static linking (ldd → libc + ld-linux only)
+      # Assert (not just print) the --static-nolibc form: a dynamic libz means the static link
+      # regressed and the binary is no longer portable across glibc hosts (DESIGN.md §8).
+      - name: Assert static linking (libc-only; no dynamic libz)
         run: |
           file target/no-bash-mcp
           ldd target/no-bash-mcp || true
+          if ldd target/no-bash-mcp | grep -qE 'libz\.so'; then
+            echo "::error::native binary dynamically links libz — --static-nolibc regressed"
+            exit 1
+          fi
 
       - name: Upload linux-x64 native binary
         uses: actions/upload-artifact@v4
