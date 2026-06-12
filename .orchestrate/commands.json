@@ -1,4 +1,4 @@
 {
-  "tests": ["mvn", "-B", "test"],
+  "tests": ["mvn", "-B", "clean", "test"],
   "build": ["mvn", "-B", "-DskipTests", "package"]
 }

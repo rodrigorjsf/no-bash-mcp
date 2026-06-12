@@ -70,3 +70,6 @@ time in future sessions.
 
 - After `git pull`, run `mvn clean test` — stale `target/` false-REDs `EnvelopeSerde`.
 - Standalone issue: bare `/orchestrate`; `/orchestrate <N>` only filters PRD #N children.
+- gh blocked by WSL DNS hijack? `curl --resolve api.github.com:443:<github-IP>` + `gh auth token` (git-SSH unaffected).
+- STDIO-driving IT: drain stdout line-by-line (`BufferedReader`), not `readAllBytes` (blocks till process exit).
+- Native binary build: `mvn package -Dpackaging=native-image` (single flag); needs `JAVA_HOME`=GraalVM + `zlib1g-dev`.
