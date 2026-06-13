@@ -2,10 +2,11 @@
 ## native-acceptance.yml — PRD-4 native release gate, fanned across the build matrix.
 ##
 ## S1 (#59) landed linux-x64; S3a (#61) added linux-arm64 (same --static-nolibc model); S2 (#60)
-## adds darwin-arm64 on a GitHub-hosted macos-14 (arm64) runner. Each tuple builds the production
-## server to a GraalVM native binary via the single AC flag `-Dpackaging=native-image` and drives
-## that binary end-to-end through the fail-closed NativeAcceptanceIT release gate (a missing binary or
-## a missing per-leg toolchain HARD-FAILS — never a silent skip).
+## added darwin-arm64 (macos-14, ad-hoc signed); S3b (#62) adds win32-x64 (windows-latest). Each
+## tuple builds the production server to a GraalVM native binary via the single AC flag
+## `-Dpackaging=native-image` and drives that binary end-to-end through the fail-closed
+## NativeAcceptanceIT release gate (a missing binary or a missing per-leg toolchain HARD-FAILS —
+## never a silent skip).
 ##
 ## Per-OS variation (GraalVM native-image does NOT cross-compile — it builds for the host):
 ##   - linux-*  : `--static-nolibc` mostly-static binary (pom `native-linux` profile); the static link
@@ -15,6 +16,11 @@
 ##                IT against the SIGNED binary. An unsigned/strip-invalidated arm64 binary is SIGKILLed
 ##                by the OS and cannot be acceptance-tested at all (openai/codex#21199, D54/D41/G17),
 ##                so proving the re-signed binary spawns is the whole point of this leg.
+##   - win32    : system-dynamic binary (pom `native-windows` profile → no-bash-mcp.exe). Build + IT
+##                in one `mvn verify` (no strip/codesign). The IT SKIPS the mvn/npx legs — their
+##                `.cmd` launchers can't be spawned without a shell the ADR-0008 posture forbids
+##                (#62/G13) — and proves the go legs + spawn + Finding serde + stdout purity. The
+##                mvn/npm-on-Windows gap is a documented, fail-clear limitation, not a silent pass.
 ##
 ## The IT's four legs each spawn a REAL subprocess from the native image:
 ##   - Maven  : `mvn` on a failing fixture        → ok=false, kind="test"
@@ -53,6 +59,11 @@ jobs:
     name: native acceptance IT (${{ matrix.tuple }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    # One shell on every OS: Git-bash on Windows runs the same bash `run:` blocks and expands
+    # $GITHUB_WORKSPACE uniformly (the MSVC env setup-graalvm exports is inherited regardless).
+    defaults:
+      run:
+        shell: bash
     strategy:
       # One red tuple must not cancel its siblings — each arch reports its own verdict.
       fail-fast: false
@@ -61,12 +72,19 @@ jobs:
           - tuple: linux-x64
             runner: ubuntu-latest
             os: linux
+            binary: no-bash-mcp
           - tuple: linux-arm64
             runner: ubuntu-24.04-arm   # GitHub-hosted aarch64 runner (free for public repos)
             os: linux
+            binary: no-bash-mcp
           - tuple: darwin-arm64
             runner: macos-14           # GitHub-hosted Apple-silicon (arm64) runner
             os: macos
+            binary: no-bash-mcp
+          - tuple: win32-x64
+            runner: windows-latest     # GitHub-hosted Windows x64 runner (MSVC for native-image)
+            os: windows
+            binary: no-bash-mcp.exe    # GraalVM appends .exe on Windows
 
     steps:
       # ── 1. Checkout ────────────────────────────────────────────────────────
@@ -114,20 +132,23 @@ jobs:
       # IT. We install the committed fixture and hand its absolute path to the IT. A failure here is
       # a real gate failure (the npm leg HARD-FAILS if node_modules/.bin/jest is absent under native).
       - name: Install the jest acceptance fixture (npm install)
+        if: matrix.os != 'windows'   # the npx leg is skipped on Windows (.cmd spawn limitation, #62)
         working-directory: src/test/resources/fixtures/jest/project
         run: npm install --no-audit --no-fund
 
       # ════════════════════════════════════════════════════════════════════════
-      #  LINUX path — build + acceptance IT in one fail-closed `mvn verify`.
+      #  LINUX / WINDOWS path — build + acceptance IT in one fail-closed `mvn verify`.
       # ════════════════════════════════════════════════════════════════════════
       # `-Dpackaging=native-image` flips the lifecycle (jar → native image) and auto-activates the
-      # `native` + `native-linux` profiles (static-link buildArgs + nbm.native.required=true). `verify`
+      # `native` + per-OS profile (linux: static-link buildArgs; windows: system-dynamic). `verify`
       # runs the unit suite, the native build, then Failsafe — where NativeAcceptanceIT drives the
       # binary. A red IT blocks the build. `-Dnbm.native.required=true` is passed EXPLICITLY
       # (belt-and-suspenders over the profile) so the gate is armed even if the profile→Failsafe
       # property binding regresses; without it the IT could read `false` and silently self-skip.
-      - name: "[linux] Build native + run NativeAcceptanceIT (release gate)"
-        if: matrix.os == 'linux'
+      # Neither OS needs strip/codesign post-processing, so build+IT run in one lifecycle. On Windows
+      # the IT SKIPS the mvn/npx legs (.cmd spawn limitation, #62) and proves go + serde + stdout.
+      - name: "[linux/windows] Build native + run NativeAcceptanceIT (release gate)"
+        if: matrix.os == 'linux' || matrix.os == 'windows'
         run: |
           mvn -B -Dpackaging=native-image \
             -Dnbm.native.required=true \
@@ -145,8 +166,10 @@ jobs:
 
       # ── 8/9. Strip the native binary (post-processing; mandated by #60 for macOS) ──
       # On macOS this INVALIDATES the linker's ad-hoc signature — the binary is now SIGKILLed until
-      # re-signed (the exact failure the next step proves we recover from).
+      # re-signed (the exact failure the next step proves we recover from). Skipped on Windows
+      # (no `strip` in the toolchain; GraalVM Windows binaries are shipped unstripped).
       - name: Strip the native binary
+        if: matrix.os != 'windows'
         run: strip target/no-bash-mcp
 
       # ── 10. [linux] Assert the --static-nolibc form (no dynamic libz) ─────
@@ -192,6 +215,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: no-bash-mcp-${{ matrix.tuple }}
-          path: target/no-bash-mcp
+          path: target/${{ matrix.binary }}
           if-no-files-found: error
           retention-days: 14

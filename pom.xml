@@ -384,6 +384,43 @@
         </plugins>
       </build>
     </profile>
+
+    <!-- win32-x64: system-dynamic (Windows links system DLLs; no static libc). NO static-nolibc.
+         GraalVM appends `.exe` to the imageName on Windows → target/no-bash-mcp.exe. The acceptance
+         IT proves the go leg + spawn + Finding serde + stdout purity here; `mvn`/`npx` spawn from the
+         native binary is a documented Windows limitation (their .cmd launchers are not runnable via
+         ProcessBuilder without a shell, which the ADR-0008 trusted-launcher posture forbids — #62). -->
+    <profile>
+      <id>native-windows</id>
+      <activation>
+        <property>
+          <name>packaging</name>
+          <value>native-image</value>
+        </property>
+        <os>
+          <family>windows</family>
+        </os>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.graalvm.buildtools</groupId>
+            <artifactId>native-maven-plugin</artifactId>
+            <configuration>
+              <imageName>no-bash-mcp</imageName>
+              <buildArgs>
+                <buildArg>--no-fallback</buildArg>
+                <buildArg>-Dfile.encoding=UTF-8</buildArg>
+                <buildArg>-Dsun.jnu.encoding=UTF-8</buildArg>
+              </buildArgs>
+              <metadataRepository>
+                <enabled>true</enabled>
+              </metadataRepository>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
   </profiles>
 
 </project>
