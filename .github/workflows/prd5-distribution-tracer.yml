@@ -163,6 +163,13 @@ jobs:
       # tools/list proves: the launcher resolved+spawned the signed binary, it was NOT SIGKILLed, and a
       # fully-initialized server answered. Gate on the PAYLOAD (real tool names), not merely exit 0 —
       # a launcher that spawned the wrong thing could still exit 0.
+      #
+      # HARD TIMEOUT (watchdog): the first cut of this workflow hung here for the full 45-min job cap.
+      # Root cause, reproduced and fixed: the launcher orphaned the native server when Inspector killed
+      # the launcher at teardown (the server held the inherited stdout pipe open, so Inspector blocked
+      # forever on EOF). The fix is launcher signal-forwarding (index.js). This watchdog is belt-and-
+      # suspenders: a stall now fails in ~3 min WITH the captured Inspector stdout/stderr, never 45 min.
+      # macOS lacks GNU `timeout`, so we use a portable bash background + kill watchdog.
       - name: "Assert initialize handshake via the launcher (Inspector --cli)"
         run: |
           set -euo pipefail
@@ -174,12 +181,24 @@ jobs:
 
           OUT="$RUNNER_TEMP/inspector-out.json"
           ERR="$RUNNER_TEMP/inspector-err.log"
-          npx --yes @modelcontextprotocol/inspector@0.14.1 --cli "$LAUNCHER_BIN" \
-            --method tools/list > "$OUT" 2> "$ERR"
 
-          echo "── inspector stdout ──"; cat "$OUT"
+          npx --yes @modelcontextprotocol/inspector@0.14.1 --cli "$LAUNCHER_BIN" \
+            --method tools/list > "$OUT" 2> "$ERR" &
+          NPID=$!
+          ( sleep 180; kill -TERM "$NPID" 2>/dev/null; sleep 5; kill -KILL "$NPID" 2>/dev/null ) &
+          WPID=$!
+          set +e
+          wait "$NPID"; RC=$?
+          set -e
+          kill "$WPID" 2>/dev/null || true   # cancel the watchdog (diagnostic-only || true)
+
+          echo "── inspector stdout ──"; cat "$OUT" || true
           echo "── inspector stderr ──"; cat "$ERR" || true
 
+          if [ "$RC" -ne 0 ]; then
+            echo "::error::Inspector --cli exited $RC (137/143 => watchdog-killed: it stalled past 180s)"
+            exit 1
+          fi
           grep -q '"run_tests"'  "$OUT" || { echo "::error::tools/list did not list run_tests — handshake/catalog failed"; exit 1; }
           grep -q '"git_status"' "$OUT" || { echo "::error::tools/list did not list git_status — handshake/catalog failed"; exit 1; }
           echo "HANDSHAKE: initialize + tools/list succeeded against the launcher-spawned signed binary (no SIGKILL)"

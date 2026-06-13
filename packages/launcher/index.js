@@ -70,6 +70,17 @@ try {
 // the JSON-RPC channel flows agent <-> native binary with the launcher transparently in the middle.
 const child = spawn(binaryPath, process.argv.slice(2), { stdio: 'inherit' });
 
+// Forward termination to the child so killing the launcher never orphans the native server. Without
+// this, a harness (or the MCP Inspector) that SIGTERMs the launcher leaves the native binary alive
+// holding the inherited stdout pipe open — the peer then blocks forever waiting for EOF (the exact
+// 45-min stall the S1 tracer surfaced). We do NOT exit here: the child's own 'exit' handler below is
+// the single place that maps the child's disposition onto our exit code.
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(sig, () => {
+    if (!child.killed) child.kill(sig);
+  });
+}
+
 child.on('error', (err) => {
   failClear({
     error: 'no-bash-mcp-launcher',
