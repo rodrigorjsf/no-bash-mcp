@@ -157,7 +157,11 @@ _Avoid_: scoped package, optional dependency, bundle, archive, variant.
 The small package the harness invokes that, each session, selects the **native binary** matching the
 host's OS and architecture and runs it, forwarding the agent's I/O. Distinct from the **native
 binary** it launches and from the **Bootstrap skill** (Bootstrap registers the MCP once; the
-Launcher selects-and-runs on every session).
+Launcher selects-and-runs on every session). Not to be confused with the *trusted launcher* of
+[ADR-0008](./docs/adr/0008-trusted-manager-launcher-not-repo-wrapper.md): that sense is the
+PATH-resolved system **Manager** (`mvn`/`go`/`npx`) the server spawns to run a build — a different
+concept that merely shares the English word. (The Launcher is itself a Node process that stays
+resident in front of the native binary for the whole session — the footprint trade in ADR-0010.)
 _Avoid_: shim (the impl/code term for the same package), wrapper, loader, trampoline, bootstrap (the Bootstrap skill is a separate concept).
 
 ### Forge inspection
