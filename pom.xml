@@ -276,14 +276,23 @@
 
   <profiles>
     <!-- ========================================================================================
-         PRD-4 S1 (#59) native release form. AUTO-ACTIVATED by `-Dpackaging=native-image` so a
-         single flag both flips the lifecycle (micronaut-maven-plugin → native-build-tools) AND
-         applies the static-link buildArgs + the fail-closed acceptance gate. No second `-Pnative`
-         flag is needed; the AC names `mvn -Dpackaging=native-image ...`.
+         PRD-4 native release form. AUTO-ACTIVATED by `-Dpackaging=native-image` so a single flag
+         both flips the lifecycle (micronaut-maven-plugin → native-build-tools) AND applies the
+         per-OS buildArgs + the fail-closed acceptance gate. No second `-Pnative` flag is needed;
+         the AC names `mvn -Dpackaging=native-image ...`.
 
-         buildArgs (proven by #58 on linux-x64, GraalVM CE 25.0.2 JDK-25):
-           static-nolibc  mostly-static (glibc dynamic, libz et al. static); needs zlib1g-dev →
-                          libz.a. DESIGN.md §8 portability mandate.
+         The native config is split across an OS-INVARIANT base profile and one per-OS profile,
+         because GraalVM native-image does NOT cross-compile (it builds for the host) and the
+         static-link model is OS-specific:
+           - `native`        (packaging only)        the OS-invariant gate property.
+           - `native-linux`  (packaging + linux)     static-nolibc mostly-static binary (#59/#61).
+           - `native-macos`  (packaging + mac)        system-dynamic binary (macOS cannot static-link
+                                                       libc); ad-hoc codesigned in CI AFTER strip (#60).
+         Only ONE os-family profile activates per host, so each fully specifies its own buildArgs —
+         no profile-merge ambiguity. (Maven ANDs the <property> and <os> activation conditions:
+         verified `mvn help:active-profiles` only lights an os-profile under -Dpackaging=native-image.)
+
+         Common buildArgs (proven by #58 on linux-x64, GraalVM CE 25.0.2 JDK-25):
            no-fallback    fail the build rather than emit a JVM-fallback image.
            UTF-8 file/jnu keep stdout pure-JSON on hosts with a non-UTF-8 default charset.
          metadataRepository auto-fetches library metadata; the logback ConsoleAppender.setTarget
@@ -299,9 +308,25 @@
       </activation>
       <properties>
         <!-- Under native packaging the binary MUST exist; a missing binary is a hard failure in
-             NativeAcceptanceIT, not a self-skip (anti-false-green: this IT is the release gate). -->
+             NativeAcceptanceIT, not a self-skip (anti-false-green: this IT is the release gate).
+             OS-invariant — it holds on every tuple. -->
         <nbm.native.required>true</nbm.native.required>
       </properties>
+    </profile>
+
+    <!-- linux-x64 / linux-arm64: mostly-static (glibc dynamic, libz et al. static); needs
+         zlib1g-dev → libz.a. DESIGN.md §8 portability mandate. -->
+    <profile>
+      <id>native-linux</id>
+      <activation>
+        <property>
+          <name>packaging</name>
+          <value>native-image</value>
+        </property>
+        <os>
+          <family>linux</family>
+        </os>
+      </activation>
       <build>
         <plugins>
           <plugin>
@@ -311,6 +336,42 @@
               <imageName>no-bash-mcp</imageName>
               <buildArgs>
                 <buildArg>--static-nolibc</buildArg>
+                <buildArg>--no-fallback</buildArg>
+                <buildArg>-Dfile.encoding=UTF-8</buildArg>
+                <buildArg>-Dsun.jnu.encoding=UTF-8</buildArg>
+              </buildArgs>
+              <metadataRepository>
+                <enabled>true</enabled>
+              </metadataRepository>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
+    <!-- darwin-arm64: system-dynamic (macOS has no static libc); NO static-nolibc buildArg. The
+         binary the linker emits is ad-hoc signed, but `strip` (CI post-processing) INVALIDATES that
+         signature → the OS SIGKILLs it; CI re-runs `codesign -s -` AFTER strip and the acceptance
+         IT then drives the SIGNED binary (#60, D54/D41/G17). -->
+    <profile>
+      <id>native-macos</id>
+      <activation>
+        <property>
+          <name>packaging</name>
+          <value>native-image</value>
+        </property>
+        <os>
+          <family>mac</family>
+        </os>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.graalvm.buildtools</groupId>
+            <artifactId>native-maven-plugin</artifactId>
+            <configuration>
+              <imageName>no-bash-mcp</imageName>
+              <buildArgs>
                 <buildArg>--no-fallback</buildArg>
                 <buildArg>-Dfile.encoding=UTF-8</buildArg>
                 <buildArg>-Dsun.jnu.encoding=UTF-8</buildArg>
