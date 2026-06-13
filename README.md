@@ -115,10 +115,12 @@ native-image does **not** cross-compile, so each tuple is built on its own runne
 binary. Their launchers (`mvn.cmd`, `npx.cmd`) are `.cmd` shims, and the server spawns launchers
 directly with **no shell** (the trusted-launcher security posture, ADR-0008) — but Windows
 `CreateProcess` only ever executes `.exe`, never a `.cmd`, without a shell. `go` (a real `go.exe`)
-works. This is a documented, fail-clear limitation, not a silent failure: a Maven/Node `run_tests`
-on Windows returns a clear operational error. On Windows, use the JVM jar (`java -jar`) for
-Maven/Node projects, or run the native binary under **WSL2** (a `linux-x64` / `linux-arm64`
-environment).
+works. Maven/Node `run_tests` is therefore **unsupported on the native Windows binary**: the
+resolver finds `mvn.cmd`/`npx.cmd` on PATH, but the binary cannot spawn a `.cmd` without a shell, so
+the launch fails. On Windows, use the JVM jar (`java -jar`) for Maven/Node projects, or run the
+native binary under **WSL2** (a `linux-x64` / `linux-arm64` environment). Surfacing this launch
+failure as a *structured* operational error (rather than an unstructured exception) is tracked in
+#71.
 
 **Not produced.** `win32-arm64` and `darwin-x64` native binaries are intentionally not built; use
 the JVM jar on those platforms.
