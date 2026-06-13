@@ -117,7 +117,14 @@ jobs:
     name: publish npm packages (Platform packages → Launcher)
     needs: build
     runs-on: ubuntu-latest
-    environment: npm-publish   # matches the Launcher's OIDC trusted-publisher config (D57)
+    # OIDC needs the environment claim (D57 configured the trusted publisher WITH environment
+    # `npm-publish`), but ONLY a real publish authenticates — a --dry-run does not. So apply the
+    # environment ONLY on a real `v*` tag publish; workflow_dispatch dry-runs then run WITHOUT the
+    # environment and are not gated by its deployment-branch policy.
+    # REQUIRED env config for the real publish: Settings > Environments > npm-publish > "Deployment
+    # branches and tags" must ALLOW `v*` TAGS — "Selected branches and tags" + a Tag rule `v*`. A tag
+    # is NOT a "protected branch", so "Protected branches only" rejects the tag-triggered publish.
+    environment: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) && 'npm-publish' || '' }}
     permissions:
       id-token: write          # OIDC token: Launcher trusted publishing + provenance for all packages
       contents: read
