@@ -339,14 +339,30 @@ develop and test on the **JVM** (fast inner loop), build a **GraalVM native imag
 
 | Phase | Command | When |
 |---|---|---|
-| Dev run | `./mvnw mn:run` | local iteration |
-| JVM tests | `./mvnw test` | every TDD cycle |
-| Native tests | `./mvnw test -Dpackaging=native-image` | CI release gate only |
-| Native binary | `./mvnw package -Dpackaging=native-image` | release |
+| Dev run | `mvn mn:run` | local iteration |
+| JVM tests | `mvn test` | every TDD cycle |
+| Native binary | `mvn package -Dpackaging=native-image` | release |
+| Native acceptance gate | `mvn verify -Dpackaging=native-image` | CI release gate only |
 
-Distribution: **mostly-static** (`--static-nolibc`) portable binary; **no UPX** (per-launch
-decompression negates native startup for an on-demand STDIO server). Build inside Linux ext4 on WSL2,
-never `/mnt/c`.
+The single flag `-Dpackaging=native-image` is the whole switch: it flips the lifecycle (the
+`micronaut-maven-plugin` delegates jar→native-image to native-build-tools) **and** auto-activates the
+pom's `native` profile, which supplies the static-link buildArgs and turns the acceptance IT
+fail-closed (`nbm.native.required=true`). No second `-Pnative` flag. Commands use the trusted system
+`mvn` on PATH (ADR-0008), never a repo wrapper — there is no `./mvnw`.
+
+**Native acceptance gate (PRD-4 S1, [#59]).** `NativeAcceptanceIT` (a Failsafe IT) drives the built
+`--static-nolibc` binary directly over STDIO and is the linux-x64 **release blocker** — a red IT
+blocks the merge ([`.github/workflows/native-acceptance.yml`](./.github/workflows/native-acceptance.yml)).
+It spawns a real `mvn`, `go test` (both a failing test → `kind="test"` and a build failure →
+`kind="container"`, exercising the polymorphic `Finding` serde natively), and `npx jest --no-install`
+from the native image, and asserts stdout stays pure JSON-RPC while a subprocess forks. It is
+**fail-closed**: under the `native` profile a missing binary or per-leg toolchain HARD-FAILS (never an
+`assumeTrue` self-skip — the G5/D28 anti-false-green spine). The verified binary is published as the
+`no-bash-mcp-linux-x64` CI artifact (the input form PRD-5's npm launcher repackages).
+
+Distribution: **mostly-static** (`--static-nolibc`) portable binary (`ldd` → `libc` + `ld-linux`
+only; libz static, needs `zlib1g-dev` → `libz.a`); **no UPX** (per-launch decompression negates
+native startup for an on-demand STDIO server). Build inside Linux ext4 on WSL2, never `/mnt/c`.
 
 **Harness-adapter scoping (reconciliation).** The grilling handoff listed three adapter families. The
 **harness adapter** (`adapter/out/harness/`) — the bootstrap permission-config writer — belongs to the
@@ -418,10 +434,12 @@ committed. Outcomes:
   rule 4 (`build-fail` → `ERRORED`, compiler message + `file:line` preserved).
 - **Micronaut MCP STDIO spike — DONE** ([`spikes/s2-mcp-stdio/NOTES.md`](./spikes/s2-mcp-stdio/NOTES.md)).
   STDIO works end-to-end and stdout is pure JSON-RPC on **both the JVM and a real GraalVM CE 25.0.2 native
-  binary** (startup ~11 ms). **Native blockers found (now §7/§8 obligations):** the link needs
-  `zlib1g-dev` (§A.1); the binary crashes at startup on the logback `<target>System.err</target>`
-  reflection until tracing-agent metadata is shipped; the mandated `--static-nolibc` form was not built
-  (a CI obligation). The schema's *native* polymorphic-serde path is JVM-validated only (ADR-0007 Scope).
+  binary** (startup ~11 ms). The native blockers found here are **discharged by PRD-4 (#58 de-risk → #59
+  productionization):** `zlib1g-dev` is a CI/build prerequisite; the logback `setTarget` reflection gap is
+  shipped as `reachability-metadata.json` under `META-INF/native-image/`; the `--static-nolibc` linux-x64
+  form is **built and gated in CI** (`mvn verify -Dpackaging=native-image`). The schema's *native*
+  polymorphic-serde path is now **native-validated** — `NativeAcceptanceIT` round-trips both `TestFinding`
+  (`kind="test"`) and `ContainerFinding` (`kind="container"`) over the binary's STDIO (no longer JVM-only).
 - **Forge read-only spike — DONE (mechanisms only)**
   ([`spikes/s3-forge/NOTES.md`](./spikes/s3-forge/NOTES.md)). The by-reference token, the GHES `/api/v3`
   URL seam, the common `ContainerFinding(RUN)` envelope shape, and the `get_log` drill-down hold. **Not
@@ -434,8 +452,10 @@ committed. Outcomes:
   ADR-0007; field names are jest-validated by the prototype.
 - **pom-wiring decisions** — JUnit 6.0.3 vs 6.1.0; the `native:test` subset for CI; coverage tool (JaCoCo
   on Java 25/GraalVM); final base package / groupId.
-- **Native release form** — build + assert the `--static-nolibc` stdout-clean binary in the CI release
-  gate (with `zlib1g-dev` installed and the logback metadata shipped).
+- **Native release form** — **CLOSED for linux-x64 (PRD-4 S1, #59).** The `--static-nolibc` stdout-clean
+  binary is built and asserted in the CI release gate (`native-acceptance.yml`: `zlib1g-dev` installed,
+  logback metadata shipped, `NativeAcceptanceIT` fail-closed). The remaining tuples (darwin-arm64,
+  linux-arm64, win32-x64) extend the same harness per PRD-4 (#60–#63); they are CI-only (cross-built).
 
 ---
 
