@@ -123,6 +123,18 @@ environment).
 **Not produced.** `win32-arm64` and `darwin-x64` native binaries are intentionally not built; use
 the JVM jar on those platforms.
 
+**Release artifacts.** Pushing a version tag (`v*`) runs the full 4-tuple matrix as a release gate
+(a red acceptance IT on any tuple blocks the release) and publishes the verified binaries as GitHub
+Release assets in a stable layout that PRD-5's npm/npx launcher consumes:
+
+| Asset | Tuple |
+|---|---|
+| `no-bash-mcp-linux-x64`     | linux-x64 (static)     |
+| `no-bash-mcp-linux-arm64`   | linux-arm64 (static)   |
+| `no-bash-mcp-darwin-arm64`  | darwin-arm64 (signed)  |
+| `no-bash-mcp-win32-x64.exe` | win32-x64              |
+| `SHA256SUMS`                | integrity manifest     |
+
 ---
 
 ## Registering the server (manual)
