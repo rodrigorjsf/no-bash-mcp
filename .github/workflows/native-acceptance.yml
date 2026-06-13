@@ -53,6 +53,11 @@ on:
       - "pom.xml"
       - ".github/workflows/native-acceptance.yml"
   workflow_dispatch: {}
+  # Reusable: native-release.yml calls this on a version tag to build + acceptance-test all four
+  # tuples as the release gate, then publishes the artifacts. workflow_call ignores the push `paths`
+  # filter above, so a tag always builds the full matrix regardless of which files the tag commit
+  # touched (the tags/paths interaction is otherwise undefined — #63).
+  workflow_call: {}
 
 jobs:
   native-acceptance:

@@ -1,0 +1,80 @@
+##
+## native-release.yml — PRD-4 S4 (#63): the release gate + release artifacts.
+##
+## On a version tag (`v*`), build and acceptance-test ALL FOUR tuples, then publish the verified
+## binaries as a GitHub Release. The build is the GATE: it reuses native-acceptance.yml (the same
+## fail-closed 4-tuple matrix that gates every PR) via `workflow_call`, so a red acceptance IT on
+## ANY tuple fails the build job → the release job (which `needs` it) never runs → no release is
+## published. GraalVM JDK-25 per-tuple availability (G15) is verified by construction: each leg
+## builds with GraalVM 25, so an unavailable toolchain fails that leg and blocks the release.
+##
+## Reusing native-acceptance.yml via workflow_call (rather than duplicating the matrix, or bolting a
+## tag trigger onto it) is deliberate: a `push` with both `tags` and `paths` filters has undefined
+## path-evaluation for tags, so a tag could silently skip the build. A separate tag-triggered caller
+## with no `paths` filter always builds the full matrix.
+##
+## Release artifact layout (stable contract PRD-5 consumes — npm optionalDependencies map
+## <platform>-<arch> to these asset names):
+##   no-bash-mcp-linux-x64        (static, --static-nolibc)
+##   no-bash-mcp-linux-arm64      (static, --static-nolibc)
+##   no-bash-mcp-darwin-arm64     (system-dynamic, ad-hoc codesigned)
+##   no-bash-mcp-win32-x64.exe    (system-dynamic)
+##   SHA256SUMS                   (integrity manifest over the four binaries)
+##
+## NOT produced (uncovered tuples, documented not silently attempted — D40): win32-arm64 and
+## darwin-x64. PRD-5's launcher fails clear on those; the JVM jar is the fallback there.
+##
+name: Native Release
+
+on:
+  push:
+    tags: [ "v*" ]   # NO paths filter — a tag always builds the full matrix (see header)
+
+jobs:
+  # ── Release gate: build + acceptance-test all four tuples (reused matrix) ──
+  build:
+    name: build + acceptance gate (4-tuple matrix)
+    uses: ./.github/workflows/native-acceptance.yml
+    secrets: inherit   # forward GITHUB_TOKEN so the reused workflow's setup-graalvm authenticates
+
+  # ── Publish the verified binaries as a GitHub Release ──
+  release:
+    name: publish release artifacts
+    needs: build       # gate: a red tuple fails `build`, so this never runs → no release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # gh release create writes a release + uploads assets
+    steps:
+      - name: Download all verified native binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts   # each artifact lands in artifacts/<name>/<binary>
+
+      # Assemble the stable, per-tuple-named layout PRD-5 consumes, plus a checksum manifest.
+      - name: Assemble release layout + checksums
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp artifacts/no-bash-mcp-linux-x64/no-bash-mcp     release/no-bash-mcp-linux-x64
+          cp artifacts/no-bash-mcp-linux-arm64/no-bash-mcp   release/no-bash-mcp-linux-arm64
+          cp artifacts/no-bash-mcp-darwin-arm64/no-bash-mcp  release/no-bash-mcp-darwin-arm64
+          cp artifacts/no-bash-mcp-win32-x64/no-bash-mcp.exe release/no-bash-mcp-win32-x64.exe
+          ( cd release && sha256sum * > SHA256SUMS )
+          echo "── release/ ──"
+          ls -l release
+          cat release/SHA256SUMS
+
+      - name: Create GitHub Release with the verified 4-tuple artifact set
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            release/no-bash-mcp-linux-x64 \
+            release/no-bash-mcp-linux-arm64 \
+            release/no-bash-mcp-darwin-arm64 \
+            release/no-bash-mcp-win32-x64.exe \
+            release/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
