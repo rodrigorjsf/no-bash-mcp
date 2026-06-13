@@ -5,6 +5,11 @@ target/
 # --no-install invariant means CI provisions it, and it must not enter the repo)
 node_modules/
 
+# PRD-5 distribution packages: the native binary a Platform package carries is a build artifact CI
+# stages before packing (never committed); local `npm pack` tarballs likewise stay out of the repo.
+packages/*/bin/
+packages/**/*.tgz
+
 # IDE
 .idea/
 *.iml
