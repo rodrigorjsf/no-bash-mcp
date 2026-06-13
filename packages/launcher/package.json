@@ -1,0 +1,27 @@
+{
+  "name": "no-bash-mcp",
+  "version": "0.0.0",
+  "description": "Launcher for the no-bash-mcp native MCP server: selects the native binary matching the host OS/arch, makes it executable, spawns it, and forwards the STDIO JSON-RPC channel.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rodrigorjsf/no-bash-mcp.git"
+  },
+  "type": "commonjs",
+  "bin": {
+    "no-bash-mcp": "index.js"
+  },
+  "files": [
+    "index.js",
+    "lib/"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@no-bash-mcp/darwin-arm64": "0.0.0"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}

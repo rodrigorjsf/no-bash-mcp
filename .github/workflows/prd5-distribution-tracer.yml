@@ -1,0 +1,185 @@
+##
+## prd5-distribution-tracer.yml — PRD-5 S1 (#75): the distribution-channel tracer bullet.
+##
+## Proves the RISKIEST leg of the npm/npx channel end-to-end on darwin-arm64 WITHOUT publishing to any
+## registry (local `npm pack` only). PRD-4 #60 already proved the darwin-arm64 SIGNED binary does the
+## MCP `initialize` handshake over STDIO; the NEW risk S1 isolates is the PACKAGING layer:
+##
+##   * does the npm tar round-trip (npm pack -> tarball -> npm install extract) preserve the Mach-O
+##     ad-hoc code signature AND the executable bit?  (the openai/codex#21199 failure mode, D54/G17)
+##   * does the Node Launcher indirection (resolve os/arch -> platform package -> spawn, forward stdio)
+##     actually launch the signed binary so a fully-initialized server answers?
+##
+## This is CI-runner-bound (real macos-14 Apple-silicon + codesign), so — like the native matrix — it
+## cannot be gated by a host-local orchestrate run; it is hand-built and verified on its own runner.
+## The host-portable half of the Launcher (the pure (os,arch) -> package resolution + the structured
+## fail-clear error for an unsupported platform, AC#1) is unit-tested separately (`npm test`) and runs
+## here too, but it is NOT the gate: the gate is the three darwin assertions below, which MUST run.
+##
+## NO registry publish happens in this workflow (S3 adds `npm publish --provenance`).
+##
+name: PRD-5 Distribution Tracer (darwin-arm64, local-pack)
+
+on:
+  push:
+    branches: [ "master", "development", "prd5/**" ]
+    paths:
+      - "packages/**"
+      - "pom.xml"
+      - ".github/workflows/prd5-distribution-tracer.yml"
+  pull_request:
+    branches: [ "master", "development" ]
+    paths:
+      - "packages/**"
+      - "pom.xml"
+      - ".github/workflows/prd5-distribution-tracer.yml"
+  workflow_dispatch: {}
+
+jobs:
+  distribution-tracer:
+    name: darwin-arm64 local-pack acceptance
+    runs-on: macos-14            # GitHub-hosted Apple-silicon (arm64) runner
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. GraalVM CE 25 (JDK 25) with native-image ───────────────────────
+      - name: Set up GraalVM CE 25
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: "25"
+          distribution: graalvm-community
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache: maven
+
+      # ── 3. Node.js 22 LTS (Launcher runtime + npm pack/install + MCP Inspector) ──
+      - name: Set up Node.js 22 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # ── 4. Tooling sanity (fail early, before the slow native build) ──────
+      - name: Verify mvn / node / npm
+        run: |
+          set -euo pipefail
+          mvn --version
+          node --version
+          npm --version
+
+      # ── 5. Launcher unit tests (AC#1 logic — host-portable, NOT the gate) ──
+      # Pure (os,arch) -> platform-package resolution + the structured fail-clear error for an
+      # unsupported platform. Runs anywhere; proves the resolution branch without the darwin binary.
+      - name: Launcher resolution unit tests (npm test)
+        working-directory: packages/launcher
+        run: |
+          set -euo pipefail
+          npm test
+
+      # ── 6. Pre-warm the pinned MCP Inspector (matches the #8 harness pin) ──
+      - name: Pre-warm MCP Inspector 0.14.1
+        run: npx --yes @modelcontextprotocol/inspector@0.14.1 --version
+
+      # ── 7. Build the darwin-arm64 native binary (system-dynamic; native-macos profile) ──
+      # `-Dpackaging=native-image` flips the lifecycle and auto-activates `native` + `native-macos`
+      # (macOS cannot static-link libc, so no --static-nolibc here). `package` (not verify): the IT is
+      # not what S1 gates — the npm round-trip is.
+      - name: Build native binary (mvn package)
+        run: mvn -B -Dpackaging=native-image package
+
+      # ── 8. Strip, then RE-codesign (strip invalidates the ad-hoc signature) ──
+      # strip drops the linker's ad-hoc signature -> the arm64 binary is SIGKILLed until re-signed.
+      # `codesign -s -` is the free keyless ad-hoc identity (D54/D41/G17); --verify asserts it is valid
+      # BEFORE it is packed. This is the exact post-processing PRD-4 #60 mandates for the release binary.
+      - name: Strip + ad-hoc codesign the native binary
+        run: |
+          set -euo pipefail
+          strip target/no-bash-mcp
+          codesign --force --sign - target/no-bash-mcp
+          codesign --verify --strict --verbose=2 target/no-bash-mcp
+          codesign --display --verbose=2 target/no-bash-mcp
+
+      # ── 9. Stage into the platform package, npm pack BOTH, install from tarballs (NO registry) ──
+      # This is the real npm round-trip a user hits — minus the registry. The launcher's
+      # optionalDependency on the unpublished @no-bash-mcp scope may emit a soft 404 during resolution;
+      # it is non-fatal (optional) and the platform package is present via the direct tarball install.
+      - name: Pack + install from tarball (local-pack, no publish)
+        run: |
+          set -euo pipefail
+          mkdir -p packages/darwin-arm64/bin
+          cp target/no-bash-mcp packages/darwin-arm64/bin/no-bash-mcp
+          chmod 755 packages/darwin-arm64/bin/no-bash-mcp   # release artifact is 755; pack it as 755
+
+          ( cd packages/darwin-arm64 && npm pack --pack-destination "$RUNNER_TEMP" )
+          ( cd packages/launcher     && npm pack --pack-destination "$RUNNER_TEMP" )
+
+          PLATFORM_TGZ="$(ls "$RUNNER_TEMP"/no-bash-mcp-darwin-arm64-*.tgz)"
+          LAUNCHER_TGZ="$(ls "$RUNNER_TEMP"/no-bash-mcp-0.0.0.tgz)"
+          echo "platform tarball: $PLATFORM_TGZ"
+          echo "launcher tarball: $LAUNCHER_TGZ"
+
+          CONSUMER="$RUNNER_TEMP/consumer"
+          mkdir -p "$CONSUMER"
+          ( cd "$CONSUMER" \
+              && npm init -y >/dev/null \
+              && npm install --no-audit --no-fund "$PLATFORM_TGZ" "$LAUNCHER_TGZ" )
+
+          echo "── consumer .bin ──";        ls -l "$CONSUMER/node_modules/.bin/" || true
+          echo "── platform-package bin ──"; ls -l "$CONSUMER/node_modules/@no-bash-mcp/darwin-arm64/bin/" || true
+
+      # ── 10. SPIKE GATE 1 — signature + exec bit survived the tar round-trip (measured PRE-chmod) ──
+      # Measured on the EXTRACTED binary BEFORE the launcher's defensive chmod ever runs, so the result
+      # reflects the npm round-trip alone — the data point S1 exists to produce for S3.
+      - name: "Assert signature + exec bit survived npm pack/install (codex#21199)"
+        run: |
+          set -euo pipefail
+          BIN="$RUNNER_TEMP/consumer/node_modules/@no-bash-mcp/darwin-arm64/bin/no-bash-mcp"
+          echo "── extracted platform-package binary ──"
+          ls -l "$BIN"
+          file "$BIN"
+
+          # Data point 1: exec bit. Measured before any chmod — pure round-trip fidelity.
+          if [ -x "$BIN" ]; then
+            echo "EXEC-BIT: PRESERVED straight out of the tarball (no launcher chmod needed)"
+          else
+            echo "::error::exec bit was NOT preserved through the npm tar round-trip"
+            exit 1
+          fi
+
+          # Data point 2: ad-hoc Mach-O signature. Lives in the binary content -> a faithful tar
+          # round-trip keeps it valid. An invalid signature here means the binary would be SIGKILLed
+          # and the launcher CANNOT recover it (unlike the exec bit) — so this is a hard gate.
+          codesign --verify --strict --verbose=2 "$BIN"
+          codesign --display --verbose=2 "$BIN"
+          echo "CODESIGN: signature VALID after npm pack -> install (codex#21199 round-trip survived)"
+
+      # ── 11. SPIKE GATE 2 — initialize handshake via the launcher-spawned signed binary ──
+      # Inspector --cli runs the MCP `initialize` handshake before any --method, so a successful
+      # tools/list proves: the launcher resolved+spawned the signed binary, it was NOT SIGKILLed, and a
+      # fully-initialized server answered. Gate on the PAYLOAD (real tool names), not merely exit 0 —
+      # a launcher that spawned the wrong thing could still exit 0.
+      - name: "Assert initialize handshake via the launcher (Inspector --cli)"
+        run: |
+          set -euo pipefail
+          LAUNCHER_BIN="$RUNNER_TEMP/consumer/node_modules/.bin/no-bash-mcp"
+          if [ ! -x "$LAUNCHER_BIN" ]; then
+            echo "::error::launcher bin shim missing or not executable at $LAUNCHER_BIN"
+            exit 1
+          fi
+
+          OUT="$RUNNER_TEMP/inspector-out.json"
+          ERR="$RUNNER_TEMP/inspector-err.log"
+          npx --yes @modelcontextprotocol/inspector@0.14.1 --cli "$LAUNCHER_BIN" \
+            --method tools/list > "$OUT" 2> "$ERR"
+
+          echo "── inspector stdout ──"; cat "$OUT"
+          echo "── inspector stderr ──"; cat "$ERR" || true
+
+          grep -q '"run_tests"'  "$OUT" || { echo "::error::tools/list did not list run_tests — handshake/catalog failed"; exit 1; }
+          grep -q '"git_status"' "$OUT" || { echo "::error::tools/list did not list git_status — handshake/catalog failed"; exit 1; }
+          echo "HANDSHAKE: initialize + tools/list succeeded against the launcher-spawned signed binary (no SIGKILL)"
