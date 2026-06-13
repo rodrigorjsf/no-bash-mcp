@@ -84,9 +84,12 @@ hash (`dist.integrity`, SHA-512) plus the exact version pin (the npx model has *
 lockfile**, so reproducibility rests on exact pins, not a checked-in `package-lock.json`).
 
 **Honest tension (stated, not hidden):** "Why native" above sells the binary as *runs without a
-runtime installed*, yet npm reintroduces a **Node** dependency — for **install**, not **execution**.
-Node is near-certain present because Claude Code itself ships via npm, and execution remains a pure
-native process.
+runtime installed*, yet npm reintroduces a **Node** dependency at **both** install (package
+resolution) **and** runtime — the **Launcher** is a Node process that stays in front of the native
+binary for the whole session, piping stdio (see *Accepted cost* below, D45). Node is near-certain
+present because Claude Code itself ships via npm. What stays runtime-free is the server's *work*:
+the actual MCP operations run in the **native binary**, not in Node — but a Node launcher process is
+resident alongside it the whole session.
 
 ### Topology — `optionalDependencies` only, zero runtime download (D-TOPOLOGY)
 
