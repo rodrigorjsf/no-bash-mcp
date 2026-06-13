@@ -161,9 +161,19 @@ jobs:
             VERSION="0.0.0-dispatch"
             DRYRUN="true"    # workflow_dispatch → always dry-run
           fi
+          # npm REFUSES to publish a prerelease (X.Y.Z-foo) to the default `latest` dist-tag, so derive
+          # an explicit dist-tag from the version: the prerelease identifier (alpha/beta/rc/dispatch),
+          # else `latest` for a stable 0.x.y. Pre-1.0 -alpha/-beta/-rc releases (D58) are prereleases,
+          # so they always go under their own dist-tag — `latest` is never an unstable build, and the
+          # Bootstrap skill's exact pins (D42) make `latest` being unset/placeholder harmless.
+          case "$VERSION" in
+            *-*) PRE="${VERSION#*-}"; NPMTAG="${PRE%%.*}";;
+            *)   NPMTAG="latest";;
+          esac
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "dryrun=$DRYRUN"   >> "$GITHUB_OUTPUT"
-          echo "Resolved version=$VERSION dryrun=$DRYRUN"
+          echo "npmtag=$NPMTAG"   >> "$GITHUB_OUTPUT"
+          echo "Resolved version=$VERSION dryrun=$DRYRUN npmtag=$NPMTAG"
 
       - name: Assemble Platform packages + Launcher (stage gated binaries + version-stamp)
         run: |
@@ -193,10 +203,12 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}   # scope-limited bypass-2FA token (D57)
           DRYRUN: ${{ steps.ver.outputs.dryrun }}
+          NPMTAG: ${{ steps.ver.outputs.npmtag }}
         run: |
           set -euo pipefail
-          # --provenance only on a real publish (it needs a real registry write; moot under --dry-run).
-          FLAGS="--access public"
+          # --tag is REQUIRED for prerelease versions (npm refuses `latest` for X.Y.Z-foo); --provenance
+          # only on a real publish (needs a real registry write; moot under --dry-run).
+          FLAGS="--access public --tag $NPMTAG"
           if [ "$DRYRUN" = "true" ]; then FLAGS="$FLAGS --dry-run"; else FLAGS="$FLAGS --provenance"; fi
           for tuple in linux-x64 linux-arm64 darwin-arm64 win32-x64; do
             echo "── npm publish @no-bash-mcp/$tuple ($FLAGS) ──"
@@ -206,11 +218,12 @@ jobs:
       - name: Publish the Launcher (OIDC trusted publishing — NO token in env)
         env:
           DRYRUN: ${{ steps.ver.outputs.dryrun }}
+          NPMTAG: ${{ steps.ver.outputs.npmtag }}
           # NODE_AUTH_TOKEN deliberately UNSET here: its presence would override OIDC (D57). The
           # Launcher (`no-bash-mcp`) has a trusted publisher configured, so OIDC authenticates.
         run: |
           set -euo pipefail
-          FLAGS="--access public"
+          FLAGS="--access public --tag $NPMTAG"
           if [ "$DRYRUN" = "true" ]; then FLAGS="$FLAGS --dry-run"; else FLAGS="$FLAGS --provenance"; fi
           echo "── npm publish no-bash-mcp Launcher ($FLAGS) ──"
           ( cd packages/launcher && npm publish $FLAGS )
