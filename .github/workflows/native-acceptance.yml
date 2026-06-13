@@ -1,25 +1,33 @@
 ##
-## native-acceptance.yml — PRD-4 S1 (#59): the linux-x64 native release gate.
+## native-acceptance.yml — PRD-4 native release gate, fanned across the Linux tuples.
 ##
-## Builds the production server to a `--static-nolibc` GraalVM native binary via the single AC flag
-## `-Dpackaging=native-image` (the micronaut-maven-plugin delegates to native-build-tools; the
-## auto-activated `native` profile supplies the static-link buildArgs and sets nbm.native.required=true),
-## then drives that binary end-to-end through NativeAcceptanceIT — the FAIL-CLOSED release gate:
-## a missing binary or a missing per-leg toolchain HARD-FAILS the build (never a silent skip).
+## S1 (#59) landed the linux-x64 tracer; S3a (#61) fans the SAME `--static-nolibc` model out to
+## `linux-arm64` (aarch64) as a second matrix leg. Both legs share one step list — the only per-tuple
+## variation is the runner and the published artifact name — because aarch64 is a near-clone of x64
+## under the static-link model (G15: GraalVM JDK-25 ships a verified linux-aarch64 image).
+##
+## Each leg builds the production server to a `--static-nolibc` GraalVM native binary via the single AC
+## flag `-Dpackaging=native-image` (the native profile supplies the static-link buildArgs and sets
+## nbm.native.required=true), then drives that binary end-to-end through NativeAcceptanceIT — the
+## FAIL-CLOSED release gate: a missing binary or a missing per-leg toolchain HARD-FAILS the build
+## (never a silent skip).
 ##
 ## The IT's four legs each spawn a REAL subprocess from the native image:
 ##   - Maven  : `mvn` on a failing fixture        → ok=false, kind="test"
 ##   - Go     : `go test` on a failing fixture     → ok=false, kind="test"
 ##   - Go     : `go test` on a build-fail fixture  → ok=false, kind="container" (ContainerFinding)
 ##   - npm    : `npx jest --no-install`            → ok=false, kind="test", manager="npx"
-## plus a stdout-purity assertion (§7) while a subprocess forks. The verified binary is uploaded as
-## a named artifact (no-bash-mcp-linux-x64).
+## plus a stdout-purity assertion (§7) while a subprocess forks. Each verified binary is uploaded as a
+## named artifact (no-bash-mcp-<tuple>).
+##
+## `fail-fast: false` keeps one tuple's red leg from cancelling the others — every tuple reports its own
+## verdict so a per-arch regression is pinpointed, not masked.
 ##
 ## This is a SEPARATE workflow from integration-acceptance.yml (the JVM jar gate) because the native
 ## build is slow (~3 min); it still runs on every PR to the integration branches so a regression in
 ## the native form blocks the merge.
 ##
-name: Native Acceptance (linux-x64)
+name: Native Acceptance
 
 on:
   push:
@@ -38,9 +46,18 @@ on:
 
 jobs:
   native-acceptance:
-    name: native --static-nolibc build + acceptance IT (linux-x64)
-    runs-on: ubuntu-latest
+    name: native --static-nolibc + acceptance IT (${{ matrix.tuple }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    strategy:
+      # One red tuple must not cancel its siblings — each arch reports its own verdict.
+      fail-fast: false
+      matrix:
+        include:
+          - tuple: linux-x64
+            runner: ubuntu-latest
+          - tuple: linux-arm64
+            runner: ubuntu-24.04-arm   # GitHub-hosted aarch64 runner (free for public repos)
 
     steps:
       # ── 1. Checkout ────────────────────────────────────────────────────────
@@ -48,6 +65,8 @@ jobs:
         uses: actions/checkout@v4
 
       # ── 2. GraalVM CE 25 (JDK 25) with native-image ───────────────────────
+      # setup-graalvm resolves the host arch (x64 / aarch64) automatically — the same `java-version`
+      # and distribution yield the matching linux-aarch64 image on the arm64 runner (G15).
       - name: Set up GraalVM CE 25
         uses: graalvm/setup-graalvm@v1
         with:
@@ -120,10 +139,10 @@ jobs:
             exit 1
           fi
 
-      - name: Upload linux-x64 native binary
+      - name: Upload ${{ matrix.tuple }} native binary
         uses: actions/upload-artifact@v4
         with:
-          name: no-bash-mcp-linux-x64
+          name: no-bash-mcp-${{ matrix.tuple }}
           path: target/no-bash-mcp
           if-no-files-found: error
           retention-days: 14
