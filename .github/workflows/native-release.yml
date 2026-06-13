@@ -22,14 +22,17 @@
 ## registry auth handshake, provenance landing, or live optionalDependencies resolution — only the first
 ## real `v*` tag proves those.
 ##
-## npm AUTH (D57, forced split): the Launcher (`no-bash-mcp`, unscoped) publishes via OIDC trusted
-## publishing (environment `npm-publish`, no token); the Platform packages (`@no-bash-mcp/<tuple>`) publish
-## with the scope-limited bypass-2FA `NPM_TOKEN` because they do not exist yet and OIDC can only attach to
-## an already-published package (npm/cli#8544). Each migrates to OIDC after its first publish (future HITL).
-## Order: every Platform package BEFORE the Launcher, so the Launcher's optionalDependencies resolve
-## (D38/G18). Provenance (CI OIDC → Sigstore) is attached to all packages (`--provenance`, needs
-## id-token: write); it works under token auth too (npm >= 9.5.0), so the Platform packages get provenance
-## on their first token release.
+## npm AUTH (D59, supersedes D57's mixed-auth): EVERY package — the 4 `@no-bash-mcp/<tuple>` Platform
+## packages AND the `no-bash-mcp` Launcher — publishes via OIDC trusted publishing (environment
+## `npm-publish`, no token in env). The v0.0.1-alpha.1 dry-run-passed but the real publish hit `EOTP`
+## (a granular token without bypass-2FA cannot satisfy npm's 2FA gate non-interactively), so the channel
+## moved to its intended token-free end-state now rather than later. BOOTSTRAP (one-time, HITL, done
+## before this workflow can publish): each scoped package's FIRST publish is a manual interactive
+## placeholder (`npm publish`, passkey) — OIDC can only attach to an already-published package
+## (npm/cli#8544) — after which a trusted publisher is configured per package. Order: every Platform
+## package BEFORE the Launcher, so the Launcher's optionalDependencies resolve (D38/G18). Provenance
+## (CI OIDC → Sigstore) is attached on real publishes (`--provenance`, needs id-token: write). The
+## `NPM_TOKEN` secret is no longer used by this workflow.
 ##
 ## Release artifact layout (GitHub Release, unchanged from #63):
 ##   no-bash-mcp-linux-x64 / -linux-arm64 / -darwin-arm64 / -win32-x64.exe + SHA256SUMS
@@ -199,9 +202,16 @@ jobs:
           echo "── stamped launcher package.json ──"
           cat packages/launcher/package.json
 
-      - name: Publish Platform packages (token auth; before the Launcher — D38/G18)
+      # Publish EVERY package via OIDC trusted publishing — NO token in env (D59, supersedes D57's
+      # mixed-auth). NODE_AUTH_TOKEN is deliberately absent: its presence would override OIDC. Each of
+      # the 4 `@no-bash-mcp/<tuple>` Platform packages AND the `no-bash-mcp` Launcher has its own
+      # trusted publisher (repo `rodrigorjsf/no-bash-mcp` + workflow `native-release.yml` + environment
+      # `npm-publish`); the job runs under that environment on a real `v*` tag, so OIDC authenticates
+      # per package. Platform packages publish BEFORE the Launcher so its optionalDependencies resolve
+      # (D38/G18). The scoped packages were bootstrapped (first publish) interactively before OIDC was
+      # configured, because OIDC can only attach to an already-published package (npm/cli#8544).
+      - name: Publish all packages via OIDC (Platform packages → Launcher, D38/G18)
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}   # scope-limited bypass-2FA token (D57)
           DRYRUN: ${{ steps.ver.outputs.dryrun }}
           NPMTAG: ${{ steps.ver.outputs.npmtag }}
         run: |
@@ -214,16 +224,5 @@ jobs:
             echo "── npm publish @no-bash-mcp/$tuple ($FLAGS) ──"
             ( cd "packages/$tuple" && npm publish $FLAGS )
           done
-
-      - name: Publish the Launcher (OIDC trusted publishing — NO token in env)
-        env:
-          DRYRUN: ${{ steps.ver.outputs.dryrun }}
-          NPMTAG: ${{ steps.ver.outputs.npmtag }}
-          # NODE_AUTH_TOKEN deliberately UNSET here: its presence would override OIDC (D57). The
-          # Launcher (`no-bash-mcp`) has a trusted publisher configured, so OIDC authenticates.
-        run: |
-          set -euo pipefail
-          FLAGS="--access public --tag $NPMTAG"
-          if [ "$DRYRUN" = "true" ]; then FLAGS="$FLAGS --dry-run"; else FLAGS="$FLAGS --provenance"; fi
           echo "── npm publish no-bash-mcp Launcher ($FLAGS) ──"
           ( cd packages/launcher && npm publish $FLAGS )
