@@ -321,7 +321,7 @@ class NativeAcceptanceIT {
                 + " | (.result.structuredContent // (.result.content[0]?.text // empty | fromjson?) // empty)"
                 + " | select(type == \"object\" and has(\"ok\"))";
 
-        ProcessBuilder pb = new ProcessBuilder("jq", "-rc", filter, jsonl.toString());
+        ProcessBuilder pb = new ProcessBuilder("jq", "-rc", "-f", jqProgram(filter).toString(), jsonl.toString());
         Path out = Files.createTempFile("native-jq-out", ".json");
         Path err = Files.createTempFile("native-jq-err", ".txt");
         pb.redirectOutput(out.toFile());
@@ -366,10 +366,24 @@ class NativeAcceptanceIT {
                 .isEqualTo(expected);
     }
 
+    /**
+     * Write a jq program to a temp file so it can be passed via {@code -f <file>}, never as an inline
+     * argv string. Embedded double-quotes in a jq program ({@code "object"}, {@code "ok"},
+     * {@code .kind == "test"}) are STRIPPED by ProcessBuilder argument passing on Windows — they do
+     * not survive Java → {@code CreateProcess} → {@code jq.exe}, so {@code select(type == "object")}
+     * reaches jq as {@code select(type == object)} (a {@code object/0 is not defined} compile error).
+     * Reading the program from a file is cross-platform-safe (proven by #62 on win32-x64).
+     */
+    private static Path jqProgram(String filter) throws IOException {
+        Path program = Files.createTempFile("native-jq-prog", ".jq");
+        Files.writeString(program, filter);
+        return program;
+    }
+
     private static String jq(String json, String filter) throws Exception {
         Path in = Files.createTempFile("native-jqin", ".json");
         Files.writeString(in, json);
-        ProcessBuilder pb = new ProcessBuilder("jq", "-r", filter, in.toString());
+        ProcessBuilder pb = new ProcessBuilder("jq", "-r", "-f", jqProgram(filter).toString(), in.toString());
         Path out = Files.createTempFile("native-jqout", ".txt");
         Path err = Files.createTempFile("native-jqerr", ".txt");
         pb.redirectOutput(out.toFile());
@@ -389,7 +403,7 @@ class NativeAcceptanceIT {
     private static void assertJqTrue(String json, String expression, String description) throws Exception {
         Path in = Files.createTempFile("native-jqein", ".json");
         Files.writeString(in, json);
-        ProcessBuilder pb = new ProcessBuilder("jq", "-e", expression, in.toString());
+        ProcessBuilder pb = new ProcessBuilder("jq", "-e", "-f", jqProgram(expression).toString(), in.toString());
         pb.redirectErrorStream(true);
         Path out = Files.createTempFile("native-jqeout", ".txt");
         pb.redirectOutput(out.toFile());
