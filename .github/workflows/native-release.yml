@@ -1,46 +1,80 @@
 ##
-## native-release.yml — PRD-4 S4 (#63): the release gate + release artifacts.
+## native-release.yml — PRD-4 release gate + GitHub Release (S4/#63) + PRD-5 npm publish (S3/#77).
 ##
-## On a version tag (`v*`), build and acceptance-test ALL FOUR tuples, then publish the verified
-## binaries as a GitHub Release. The build is the GATE: it reuses native-acceptance.yml (the same
-## fail-closed 4-tuple matrix that gates every PR) via `workflow_call`, so a red acceptance IT on
-## ANY tuple fails the build job → the release job (which `needs` it) never runs → no release is
-## published. GraalVM JDK-25 per-tuple availability (G15) is verified by construction: each leg
-## builds with GraalVM 25, so an unavailable toolchain fails that leg and blocks the release.
+## On a version tag (`v*`), build and acceptance-test ALL FOUR tuples (the reused fail-closed matrix),
+## then (a) publish the verified binaries as a GitHub Release and (b) publish the npm Platform packages
+## + Launcher. The build is the GATE: a red acceptance IT on ANY tuple fails `build` → nothing downstream
+## runs → nothing is released or published.
 ##
-## Reusing native-acceptance.yml via workflow_call (rather than duplicating the matrix, or bolting a
-## tag trigger onto it) is deliberate: a `push` with both `tags` and `paths` filters has undefined
-## path-evaluation for tags, so a tag could silently skip the build. A separate tag-triggered caller
-## with no `paths` filter always builds the full matrix.
+## Job graph:
+##   version-policy ──▶ build (4-tuple matrix, native-acceptance.yml) ──▶ release    (GitHub Release; tag only)
+##                                                                    └─▶ npm-publish (Platform pkgs → Launcher)
 ##
-## Release artifact layout (stable contract PRD-5 consumes — npm optionalDependencies map
-## <platform>-<arch> to these asset names):
-##   no-bash-mcp-linux-x64        (static, --static-nolibc)
-##   no-bash-mcp-linux-arm64      (static, --static-nolibc)
-##   no-bash-mcp-darwin-arm64     (system-dynamic, ad-hoc codesigned)
-##   no-bash-mcp-win32-x64.exe    (system-dynamic)
-##   SHA256SUMS                   (integrity manifest over the four binaries)
+## VERSIONING POLICY (D58 / CLAUDE.md "Versioning policy", fail-closed): `version-policy` runs FIRST and
+## rejects any tag whose MAJOR version >= 1 until a minimally stable first delivery + maintainer approval.
+## It gates `build` too, so an accidental `v1.x` tag fails in seconds, before the ~30-min matrix. Pre-1.0
+## releases are `0.x` and MAY carry `-alpha/-beta/-rc` pre-release identifiers; those PUBLISH FOR REAL.
 ##
-## NOT produced (uncovered tuples, documented not silently attempted — D40): win32-arm64 and
-## darwin-x64. PRD-5's launcher fails clear on those; the JVM jar is the fallback there.
+## DRY-RUN MODEL (irreversibility guard): a real `npm publish` happens ONLY on a real `v*` tag push.
+## `workflow_dispatch` is ALWAYS `--dry-run` — it is the safe way to exercise the publish pipeline (run it
+## on a feature branch via `gh workflow run native-release.yml --ref <branch>`) without burning a public
+## version. `--dry-run` proves package assembly, ordering, and version-stamping; it does NOT prove the
+## registry auth handshake, provenance landing, or live optionalDependencies resolution — only the first
+## real `v*` tag proves those.
+##
+## npm AUTH (D57, forced split): the Launcher (`no-bash-mcp`, unscoped) publishes via OIDC trusted
+## publishing (environment `npm-publish`, no token); the Platform packages (`@no-bash-mcp/<tuple>`) publish
+## with the scope-limited bypass-2FA `NPM_TOKEN` because they do not exist yet and OIDC can only attach to
+## an already-published package (npm/cli#8544). Each migrates to OIDC after its first publish (future HITL).
+## Order: every Platform package BEFORE the Launcher, so the Launcher's optionalDependencies resolve
+## (D38/G18). Provenance (CI OIDC → Sigstore) is attached to all packages (`--provenance`, needs
+## id-token: write); it works under token auth too (npm >= 9.5.0), so the Platform packages get provenance
+## on their first token release.
+##
+## Release artifact layout (GitHub Release, unchanged from #63):
+##   no-bash-mcp-linux-x64 / -linux-arm64 / -darwin-arm64 / -win32-x64.exe + SHA256SUMS
 ##
 name: Native Release
 
 on:
   push:
     tags: [ "v*" ]   # NO paths filter — a tag always builds the full matrix (see header)
+  workflow_dispatch: {}   # pipeline test — ALWAYS dry-run for npm publish; GitHub Release is skipped
 
 jobs:
+  # ── Pre-1.0 versioning policy guard (D58): fail-closed before the expensive matrix ──
+  version-policy:
+    name: enforce pre-1.0 versioning policy (D58)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject major >= 1 until the stability rule is lifted
+        run: |
+          set -euo pipefail
+          REF="${GITHUB_REF:-}"
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [[ "$REF" == refs/tags/v* ]]; then
+            VERSION="${REF#refs/tags/v}"
+          else
+            VERSION="0.0.0-dispatch"   # workflow_dispatch: pipeline test, dry-run, major 0
+          fi
+          MAJOR="${VERSION%%.*}"
+          if [[ "$MAJOR" =~ ^[0-9]+$ ]] && [ "$MAJOR" -ge 1 ]; then
+            echo "::error::Versioning policy (D58 / CLAUDE.md \"Versioning policy\"): the MAJOR version must stay 0 until a minimally stable first delivery AND maintainer approval. Refusing to release v$VERSION. Use 0.x (optionally -alpha/-beta/-rc), or lift the rule first."
+            exit 1
+          fi
+          echo "version policy OK: v$VERSION (major 0)"
+
   # ── Release gate: build + acceptance-test all four tuples (reused matrix) ──
   build:
     name: build + acceptance gate (4-tuple matrix)
+    needs: version-policy
     uses: ./.github/workflows/native-acceptance.yml
     secrets: inherit   # forward GITHUB_TOKEN so the reused workflow's setup-graalvm authenticates
 
-  # ── Publish the verified binaries as a GitHub Release ──
+  # ── Publish the verified binaries as a GitHub Release (real tag pushes only) ──
   release:
-    name: publish release artifacts
-    needs: build       # gate: a red tuple fails `build`, so this never runs → no release
+    name: publish GitHub Release artifacts
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     permissions:
       contents: write  # gh release create writes a release + uploads assets
@@ -50,7 +84,6 @@ jobs:
         with:
           path: artifacts   # each artifact lands in artifacts/<name>/<binary>
 
-      # Assemble the stable, per-tuple-named layout PRD-5 consumes, plus a checksum manifest.
       - name: Assemble release layout + checksums
         run: |
           set -euo pipefail
@@ -78,3 +111,99 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes
+
+  # ── Publish the npm Platform packages + Launcher (PRD-5 S3) ──
+  npm-publish:
+    name: publish npm packages (Platform packages → Launcher)
+    needs: build
+    runs-on: ubuntu-latest
+    environment: npm-publish   # matches the Launcher's OIDC trusted-publisher config (D57)
+    permissions:
+      id-token: write          # OIDC token: Launcher trusted publishing + provenance for all packages
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24 (ships npm >= 11.5.1, the trusted-publishing floor)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Verify npm / Node floor (npm >= 11.5.1, Node >= 22.14.0)
+        run: |
+          set -euo pipefail
+          node --version
+          npm --version
+
+      - name: Download verified native binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts   # artifacts/no-bash-mcp-<tuple>/<binary>
+
+      - name: Resolve version + dry-run mode (D58 policy already gated major >= 1)
+        id: ver
+        run: |
+          set -euo pipefail
+          REF="${GITHUB_REF:-}"
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [[ "$REF" == refs/tags/v* ]]; then
+            VERSION="${REF#refs/tags/v}"
+            DRYRUN="false"   # a real tag → real publish
+          else
+            VERSION="0.0.0-dispatch"
+            DRYRUN="true"    # workflow_dispatch → always dry-run
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "dryrun=$DRYRUN"   >> "$GITHUB_OUTPUT"
+          echo "Resolved version=$VERSION dryrun=$DRYRUN"
+
+      - name: Assemble Platform packages + Launcher (stage gated binaries + version-stamp)
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.ver.outputs.version }}"
+          for tuple in linux-x64 linux-arm64 darwin-arm64 win32-x64; do
+            if [ "$tuple" = "win32-x64" ]; then b="no-bash-mcp.exe"; else b="no-bash-mcp"; fi
+            mkdir -p "packages/$tuple/bin"
+            cp "artifacts/no-bash-mcp-$tuple/$b" "packages/$tuple/bin/$b"
+            if [ "$tuple" != "win32-x64" ]; then chmod 755 "packages/$tuple/bin/$b"; fi
+            ( cd "packages/$tuple" && npm version "$VERSION" --no-git-tag-version --allow-same-version >/dev/null )
+          done
+          # Launcher: stamp version AND pin every optionalDependency to the EXACT same version (D42).
+          node -e '
+            const fs = require("fs");
+            const f = "packages/launcher/package.json";
+            const p = JSON.parse(fs.readFileSync(f, "utf8"));
+            const v = process.argv[1];
+            p.version = v;
+            for (const k of Object.keys(p.optionalDependencies || {})) p.optionalDependencies[k] = v;
+            fs.writeFileSync(f, JSON.stringify(p, null, 2) + "\n");
+          ' "$VERSION"
+          echo "── stamped launcher package.json ──"
+          cat packages/launcher/package.json
+
+      - name: Publish Platform packages (token auth; before the Launcher — D38/G18)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}   # scope-limited bypass-2FA token (D57)
+          DRYRUN: ${{ steps.ver.outputs.dryrun }}
+        run: |
+          set -euo pipefail
+          # --provenance only on a real publish (it needs a real registry write; moot under --dry-run).
+          FLAGS="--access public"
+          if [ "$DRYRUN" = "true" ]; then FLAGS="$FLAGS --dry-run"; else FLAGS="$FLAGS --provenance"; fi
+          for tuple in linux-x64 linux-arm64 darwin-arm64 win32-x64; do
+            echo "── npm publish @no-bash-mcp/$tuple ($FLAGS) ──"
+            ( cd "packages/$tuple" && npm publish $FLAGS )
+          done
+
+      - name: Publish the Launcher (OIDC trusted publishing — NO token in env)
+        env:
+          DRYRUN: ${{ steps.ver.outputs.dryrun }}
+          # NODE_AUTH_TOKEN deliberately UNSET here: its presence would override OIDC (D57). The
+          # Launcher (`no-bash-mcp`) has a trusted publisher configured, so OIDC authenticates.
+        run: |
+          set -euo pipefail
+          FLAGS="--access public"
+          if [ "$DRYRUN" = "true" ]; then FLAGS="$FLAGS --dry-run"; else FLAGS="$FLAGS --provenance"; fi
+          echo "── npm publish no-bash-mcp Launcher ($FLAGS) ──"
+          ( cd packages/launcher && npm publish $FLAGS )
