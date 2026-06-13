@@ -1,0 +1,18 @@
+{"Time":"2026-06-05T16:30:00.100000000-03:00","Action":"start","Package":"nbm/calc"}
+{"Time":"2026-06-05T16:30:00.101000000-03:00","Action":"run","Package":"nbm/calc","Test":"TestAdd"}
+{"Time":"2026-06-05T16:30:00.101100000-03:00","Action":"output","Package":"nbm/calc","Test":"TestAdd","Output":"=== RUN   TestAdd\n"}
+{"Time":"2026-06-05T16:30:00.102000000-03:00","Action":"output","Package":"nbm/calc","Test":"TestAdd","Output":"--- PASS: TestAdd (0.00s)\n"}
+{"Time":"2026-06-05T16:30:00.102100000-03:00","Action":"pass","Package":"nbm/calc","Test":"TestAdd","Elapsed":0}
+{"Time":"2026-06-05T16:30:00.103000000-03:00","Action":"run","Package":"nbm/calc","Test":"TestSubtract"}
+{"Time":"2026-06-05T16:30:00.103100000-03:00","Action":"output","Package":"nbm/calc","Test":"TestSubtract","Output":"=== RUN   TestSubtract\n"}
+{"Time":"2026-06-05T16:30:00.104000000-03:00","Action":"output","Package":"nbm/calc","Test":"TestSubtract","Output":"    calc_test.go:21: Subtract(5, 3) = 1; want 2\n"}
+{"Time":"2026-06-05T16:30:00.104500000-03:00","Action":"output","Package":"nbm/calc","Test":"TestSubtract","Output":"--- FAIL: TestSubtract (0.00s)\n"}
+{"Time":"2026-06-05T16:30:00.104600000-03:00","Action":"fail","Package":"nbm/calc","Test":"TestSubtract","Elapsed":0}
+{"Time":"2026-06-05T16:30:00.105000000-03:00","Action":"run","Package":"nbm/calc","Test":"TestDivideByZero"}
+{"Time":"2026-06-05T16:30:00.105100000-03:00","Action":"output","Package":"nbm/calc","Test":"TestDivideByZero","Output":"=== RUN   TestDivideByZero\n"}
+{"Time":"2026-06-05T16:30:00.106000000-03:00","Action":"output","Package":"nbm/calc","Test":"TestDivideByZero","Output":"    calc_test.go:30: skipping: division-by-zero handling not implemented yet\n"}
+{"Time":"2026-06-05T16:30:00.106500000-03:00","Action":"output","Package":"nbm/calc","Test":"TestDivideByZero","Output":"--- SKIP: TestDivideByZero (0.00s)\n"}
+{"Time":"2026-06-05T16:30:00.106600000-03:00","Action":"skip","Package":"nbm/calc","Test":"TestDivideByZero","Elapsed":0}
+{"Time":"2026-06-05T16:30:00.107000000-03:00","Action":"output","Package":"nbm/calc","Output":"FAIL\n"}
+{"Time":"2026-06-05T16:30:00.107500000-03:00","Action":"output","Package":"nbm/calc","Output":"FAIL\tnbm/calc\t0.012s\n"}
+{"Time":"2026-06-05T16:30:00.107600000-03:00","Action":"fail","Package":"nbm/calc","Elapsed":0.012}

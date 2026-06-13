@@ -1,0 +1,51 @@
+{
+  "comment": "PRD-4 P0 (#58) native de-risk. ONLY the runtime-reflection gap the auto-fetched metadata repository does NOT cover: logback's Joran XML configurator invokes ConsoleAppender.setTarget(System.err) reflectively (DESIGN.md §7 stdout-hygiene config). The metadata repo ships the default System.out path, not the non-default setTarget. Every Micronaut bean / @Serdeable / @Introspected / MCP SDK type is regenerated automatically by the annotation processors at compile time, so it is NOT hand-shipped here. SAXParserFactoryImpl is needed to parse logback.xml at run time. Captured empirically by the s2 tracing-agent run; trimmed to the logback library surface so it is server-independent.",
+  "reflection": [
+    {
+      "type": "ch.qos.logback.classic.encoder.PatternLayoutEncoder",
+      "methods": [{ "name": "<init>", "parameterTypes": [] }]
+    },
+    {
+      "type": "ch.qos.logback.classic.spi.LogbackServiceProvider"
+    },
+    {
+      "type": "ch.qos.logback.classic.util.DefaultJoranConfigurator",
+      "methods": [{ "name": "<init>", "parameterTypes": [] }]
+    },
+    {
+      "type": "ch.qos.logback.core.ConsoleAppender",
+      "methods": [
+        { "name": "<init>", "parameterTypes": [] },
+        { "name": "setTarget", "parameterTypes": ["java.lang.String"] }
+      ]
+    },
+    {
+      "type": "ch.qos.logback.core.OutputStreamAppender",
+      "methods": [
+        { "name": "setEncoder", "parameterTypes": ["ch.qos.logback.core.encoder.Encoder"] }
+      ]
+    },
+    {
+      "type": "ch.qos.logback.core.encoder.Encoder"
+    },
+    {
+      "type": "ch.qos.logback.core.encoder.LayoutWrappingEncoder",
+      "methods": [
+        { "name": "setParent", "parameterTypes": ["ch.qos.logback.core.spi.ContextAware"] }
+      ]
+    },
+    {
+      "type": "ch.qos.logback.core.pattern.PatternLayoutEncoderBase",
+      "methods": [
+        { "name": "setPattern", "parameterTypes": ["java.lang.String"] }
+      ]
+    },
+    {
+      "type": "ch.qos.logback.core.spi.ContextAware"
+    },
+    {
+      "type": "com.sun.org.apache.xerces.internal.jaxp.SAXParserFactoryImpl",
+      "methods": [{ "name": "<init>", "parameterTypes": [] }]
+    }
+  ]
+}

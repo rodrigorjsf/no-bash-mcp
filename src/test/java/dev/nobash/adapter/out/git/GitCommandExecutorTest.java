@@ -1,6 +1,6 @@
 package dev.nobash.adapter.out.git;
 
-import dev.nobash.adapter.out.ecosystem.maven.ManagerPathResolver;
+import dev.nobash.adapter.out.ecosystem.ManagerPathResolver;
 import dev.nobash.domain.port.out.ExecResult;
 import dev.nobash.domain.port.out.ExecSpec;
 import org.junit.jupiter.api.DisplayNameGeneration;
@@ -88,7 +88,9 @@ class GitCommandExecutorTest {
             ProcessBuilder pb = anyExecutor().toProcessBuilder(spec);
 
             assertThat(pb.directory()).isNotNull();
-            assertThat(pb.directory().getPath()).isEqualTo("/tmp/some-repo");
+            // The executor sets the dir via Path.of(workingDir).toFile() — compare the File, not a
+            // POSIX string, so the assertion holds on Windows (where separators normalize to '\').
+            assertThat(pb.directory()).isEqualTo(Path.of("/tmp/some-repo").toFile());
         }
 
         @Test

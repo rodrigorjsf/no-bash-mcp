@@ -3,8 +3,9 @@
 ![](assets/readme-logo.png)
 ---
 
-> **v1 in progress.** The shipped surface is `run_tests` (Maven) and `get_log`. Node/Go/forge verbs
-> and a native binary release are roadmap items, not yet available.
+> **v1 shipped.** The shipped surface is `run_tests` (Maven, Node/jest, Go), `build`, `install`,
+> the five git read verbs, and `get_log`. Forge verbs and the npm/npx native binary launcher
+> (PRD-4 #44) are roadmap items, not yet available.
 
 A Micronaut MCP server that replaces an agent's Bash tool with safe, structured, token-efficient
 operations so the Bash permission can be removed entirely. The agent never composes a command; the
@@ -14,14 +15,14 @@ server detects the environment and maps a typed verb to a controlled invocation.
 
 ## What ships in v1
 
-Two verbs are available over a STDIO JSON-RPC channel:
+The following verbs are available over a STDIO JSON-RPC channel:
 
 ### `run_tests`
 
-Runs a project's tests via the detected Maven manager. Returns a structured `Envelope` with one of
-three shapes: **success** (counts only), **test-failure** (normalized `failures[]` with
-`file:line`, assertion message, and a `handle` for drill-down), or **operational-error** (enumerated
-`code` + actionable `hint`).
+Runs a project's tests via the detected manager (Maven, Node/jest, Go). Returns a structured
+`Envelope` with one of three shapes: **success** (counts only), **test-failure** (normalized
+`failures[]` with `file:line`, assertion message, and a `handle` for drill-down), or
+**operational-error** (enumerated `code` + actionable `hint`).
 
 | Parameter    | Type          | Required | Description |
 |---|---|---|---|
@@ -37,6 +38,33 @@ pair returns `INVALID_TARGET` before any process is launched.
 
 A concurrency guard prevents two overlapping `run_tests` calls on the same project path from
 racing; the second caller receives `RESOURCE_BUSY` immediately.
+
+### `build`
+
+Compiles the project via the detected manager and returns a structured `Envelope`. On a compile
+failure, compiler diagnostics are returned as `diagnostics[]` with `file`, `line`, `col`,
+`severity`, and `message`. A successful build returns a minimal counts payload with no
+`diagnostics[]` noise. Full compiler output is retained behind the `handle` for `get_log`.
+
+### `install`
+
+Installs Node.js dependencies via `npm install` and returns a structured `Envelope`. A successful
+install returns a minimal counts payload (`manager:"npm"`, `installSummary:{added, removed,
+changed}`). A failed install surfaces `INSTALL_FAILED` with npm output retained behind the `handle`.
+
+### Git read verbs
+
+Five read-only verbs expose structured git inspection, each returning a normalized envelope:
+
+| Verb | Description |
+|---|---|
+| `git_status` | Working-tree status — branch, upstream, ahead/behind, staged/unstaged/untracked changes |
+| `git_log` | Capped commit list (sha, short, author, dateIso, subject), newest first |
+| `git_show` | Commit metadata and body; the diff is retrievable via `get_log(handle)` |
+| `git_diff` | Structured diff summary (`gitDiff[]`) for working-tree vs HEAD; full patch via `get_log(handle)` |
+| `git_branch` | Normalized branch list (name, current, upstream, ahead, behind) |
+
+All git verbs are read-only and exempt from the concurrency lock.
 
 ### `get_log`
 
@@ -70,6 +98,47 @@ structural limit. This server replaces Bash-mediated build/test operations with 
 
 ---
 
+## Platform support
+
+The native binary is built and acceptance-tested in CI on four target tuples (GraalVM JDK-25;
+native-image does **not** cross-compile, so each tuple is built on its own runner). The JVM jar
+(`java -jar`) runs anywhere a JDK 25 runs and has none of the per-tuple caveats below.
+
+| Tuple | Native binary | `run_tests`: Maven / Go / Node |
+|---|---|---|
+| `linux-x64`    | ✅ static (`--static-nolibc`, portable across glibc hosts) | ✅ all three |
+| `linux-arm64`  | ✅ static (`--static-nolibc`)                              | ✅ all three |
+| `darwin-arm64` | ✅ system-dynamic, ad-hoc codesigned                       | ✅ all three |
+| `win32-x64`    | ✅ system-dynamic (`no-bash-mcp.exe`)                      | ⚠️ **Go only** — see below |
+
+**Windows caveat (`win32-x64`).** Maven and Node tests do **not** run from the native Windows
+binary. Their launchers (`mvn.cmd`, `npx.cmd`) are `.cmd` shims, and the server spawns launchers
+directly with **no shell** (the trusted-launcher security posture, ADR-0008) — but Windows
+`CreateProcess` only ever executes `.exe`, never a `.cmd`, without a shell. `go` (a real `go.exe`)
+works. Maven/Node `run_tests` is therefore **unsupported on the native Windows binary**: the
+resolver finds `mvn.cmd`/`npx.cmd` on PATH, but the binary cannot spawn a `.cmd` without a shell, so
+the launch fails. On Windows, use the JVM jar (`java -jar`) for Maven/Node projects, or run the
+native binary under **WSL2** (a `linux-x64` / `linux-arm64` environment). Surfacing this launch
+failure as a *structured* operational error (rather than an unstructured exception) is tracked in
+#71.
+
+**Not produced.** `win32-arm64` and `darwin-x64` native binaries are intentionally not built; use
+the JVM jar on those platforms.
+
+**Release artifacts.** Pushing a version tag (`v*`) runs the full 4-tuple matrix as a release gate
+(a red acceptance IT on any tuple blocks the release) and publishes the verified binaries as GitHub
+Release assets in a stable layout that PRD-5's npm/npx launcher consumes:
+
+| Asset | Tuple |
+|---|---|
+| `no-bash-mcp-linux-x64`     | linux-x64 (static)     |
+| `no-bash-mcp-linux-arm64`   | linux-arm64 (static)   |
+| `no-bash-mcp-darwin-arm64`  | darwin-arm64 (signed)  |
+| `no-bash-mcp-win32-x64.exe` | win32-x64              |
+| `SHA256SUMS`                | integrity manifest     |
+
+---
+
 ## Registering the server (manual)
 
 v1 requires manual MCP registration. There is no Bootstrap skill yet — registration and Bash
@@ -86,7 +155,10 @@ The packaged jar lands at `target/no-bash-mcp-0.1.0-SNAPSHOT.jar`.
 ### 2. Register in your harness (example: Claude Code `settings.json`)
 
 Add the server under `mcpServers` in your harness configuration. The server communicates over
-STDIO; `java -jar` is the only launcher.
+STDIO. **Interim launcher (until PRD-5 #44 ships):** `java -jar` is the current way to run the
+server. The decided distribution channel is npm/npx (ADR-0010) — the npm/npx native launcher
+ships in PRD-5 (#44), consuming the signed native artifacts PRD-4 (#57) produces, and will replace
+this `java -jar` step.
 
 ```json
 {
@@ -112,19 +184,19 @@ in Claude Code's `settings.json`). Keeping Bash enabled alongside the MCP defeat
 ## v1 scope and roadmap
 
 Shipped in v1:
-- `run_tests` — Maven only
-- `get_log` — drill-down into any retained `run_tests` result
+- `run_tests` — Maven, Node (jest), Go
+- `build` — Maven (compile diagnostics via `diagnostics[]`)
+- `install` — Node/npm dependency install
+- `git_status`, `git_log`, `git_show`, `git_diff`, `git_branch` — read-only git inspection
+- `get_log` — drill-down into any retained run result via a `handle`
 - P9 outbound neutralization of untrusted repo-derived strings
 - Concurrency guard (`RESOURCE_BUSY`) on overlapping runs
 
 Not yet available (roadmap, not shipped):
-- Node/npm/yarn/pnpm (`run_tests` via jest/vitest/mocha)
-- Go (`run_tests` via `go test -json`)
-- `build`, `install`, `lint`, `run_task` verbs
+- `lint`, `run_task` verbs
 - Forge inspection (`pr_checks`, `pr_view`, `pr_diff`)
-- Git read verbs (`git_log`, `git_diff`, `git_show`, etc.)
 - `describe_project`, `dependencies`
-- GraalVM native binary release
+- npm/npx native binary launcher (PRD-5 #44, ADR-0010); PRD-4 (#57) ships the signed native artifacts it consumes
 
 ---
 

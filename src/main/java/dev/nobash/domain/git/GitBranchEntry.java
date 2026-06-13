@@ -1,5 +1,6 @@
 package dev.nobash.domain.git;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import io.micronaut.core.annotation.Introspected;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.serde.annotation.Serdeable;
@@ -25,6 +26,12 @@ import io.micronaut.serde.annotation.Serdeable;
  * @param ahead    commits this branch is ahead of its upstream; null when there is no upstream
  * @param behind   commits this branch is behind its upstream; null when there is no upstream
  */
+// Omit null fields (upstream/ahead/behind/name) so they are ABSENT rather than serialized as
+// `null` — the generated MCP @JsonSchema outputSchema types them as string/integer (it does not
+// express nullable for @Nullable components), so a rendered `null` fails the framework's
+// structuredContent validation. They are not `required`; absence is valid and preserves the
+// "no upstream" semantic. Mirrors {@link GitStatus}.
+@JsonInclude(JsonInclude.Include.NON_NULL)
 @Serdeable
 @Introspected
 public record GitBranchEntry(

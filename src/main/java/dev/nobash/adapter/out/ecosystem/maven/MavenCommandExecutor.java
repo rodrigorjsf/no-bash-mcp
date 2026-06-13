@@ -1,5 +1,6 @@
 package dev.nobash.adapter.out.ecosystem.maven;
 
+import dev.nobash.adapter.out.ecosystem.ManagerPathResolver;
 import dev.nobash.domain.port.out.CommandExecutorPort;
 import dev.nobash.domain.port.out.ExecResult;
 import dev.nobash.domain.port.out.ExecSpec;

@@ -70,3 +70,61 @@ The universal schema normalizes **reports**; when a report is absent there is no
 folding it anyway would require stdout-scraping the compiler output (rejected by D8). The `build` verb
 (later PRD) owns compile-error → `file:line` parsing. This refines, and does not contradict, ADR-0007
 rule 2 (the ERRORED discriminator governs a finding *when one exists*).
+
+### Go compile-fail — empirically de-risked (2026-06-05, Go 1.26, PRD-3 grill)
+
+The prototype (`prototype/NOTES.md`) left one Go open item: *"a Go build failure interleaves non-JSON
+output on stdout — the fixture used a runtime `init()` panic, clean JSON; the compile-error path is
+un-de-risked."* Settled empirically by running `go test -json` against two non-compiling packages
+(broken source, broken test file), capturing `stdout`+`stderr` merged:
+
+- **Output is 100% valid NDJSON — zero interleaved raw text** (even with `2>&1`). The "non-JSON
+  interleaving" worry **does not reproduce on Go 1.26**; `go test -json` wraps the whole build failure
+  into the JSON event stream.
+- Event sequence per failed package:
+  `build-output`(header) → `build-output`(the compiler diagnostic) → `build-fail` → package `start`
+  → package `output` (`FAIL\t<pkg> [build failed]`) → package `fail` (`Elapsed:0`, `FailedBuild:<importpath>`).
+- **`build-output.Output` carries `file:line:col: message`** (e.g. `brokensrc/brokensrc.go:5:9: cannot
+  use "not an int" … as int value …`) → `SourceRef{file,line}` is derivable (col dropped — `SourceRef`
+  has no column; that detail belongs to the `build` verb's `CompileDiagnostic`, not this fold).
+- The events carry **`ImportPath`** with a `[pkg.test]` suffix (`nbm/gofail/brokensrc [nbm/gofail/brokensrc.test]`);
+  the `start`/`fail` events carry the clean **`Package`**. The normalizer keys build-output → package
+  by stripping ` [...]`, and the package `fail` carries **`FailedBuild`** to bind them.
+- **Process exit = 1** (consistent with the D28 exit-code floor).
+
+**Normalizer rule (Go compile-fail):** collect `build-output` per import path; on `build-fail` + package
+`fail`, emit `ContainerFinding(scope=PACKAGE, outcome=ERRORED, container=<Package>, message=<joined
+build-output>, source=<first file:line>)` — exactly ADR-0007 rule 4. No stdout-scraping (the diagnostics
+are JSON-wrapped), so D8 is honored. Fixtures captured under `/tmp/nbm-gofail/` during the grill; lift
+clean copies into `src/test/resources/fixtures/go/` as the PRD-3 red fixtures.
+
+### jest reporter & no-owner shape — empirically grounded (2026-06-05, jest 30.4.1, PRD-3 grill)
+
+Ran a real jest suite (1 pass, 1 assertion-fail, 1 top-level-throw module-load failure) to ground the
+Node `run_tests` invocation + the axis-5 no-owner shape against the **current** jest, not the prototype's
+29.7:
+
+- **Reporter injection = `jest --json --outputFile=<fresh> --testLocationInResults`** — MCP-controlled
+  flags, the Node analog of Surefire's injected `-Dsurefire.reportsDirectory` (D4 injected-not-free-flag;
+  D27 freshness). With `--outputFile`, the JSON report goes to the **file** and **stdout stays empty**
+  (jest's human reporter is on stderr) → the STDIO JSON-RPC channel is **never polluted** (G15), and the
+  fresh per-run `--outputFile` path **is** the D27 freshness gate (any content is necessarily this run's).
+- **Exit code = 1** on test failure **and** on no-tests-match ("0 matches") → the D28 exit-floor and the
+  D29 `NO_TESTS_RUN` map cleanly; the JSON also carries `success:false` + `numTotalTests` /
+  `numPassedTests` / `numFailedTests` + `numRuntimeErrorTestSuites`.
+- **No-test-owner (axis 5) discriminator = `assertionResults:[] && status:"failed"`** (corroborated by
+  top-level `numRuntimeErrorTestSuites`). ⚠ In jest 30 **`testExecError` is `null`** for a top-level
+  throw — do **not** key on it. The empty-`assertionResults` + file-level **`message`** (`● Test suite
+  failed to run … > 2 | throw …`) is the reliable signal → `ContainerFinding(FILE, ERRORED)`, message
+  from `testResults[].message`. Confirms (and sharpens) the prototype's axis-5 correction on jest 30.
+- **`file:line`** for a normal failure: structured **`assertionResults[].location = {line,column}`** (the
+  test-declaration site) when `--testLocationInResults` is injected — a machine field (D8-aligned, no
+  stack-scrape); the exact failure site stays in `failureMessages[0]` stack (`fail.test.js:3:21`) as
+  best-effort `detail`.
+- **Security / preflight posture:** invoke jest via the trusted `npm`/`npx` launcher on PATH with
+  **`--no-install`** (or resolve `node_modules/.bin/jest` directly) so the runner **never
+  network-fetches** a framework — a missing jest → preflight `DEPS_NOT_INSTALLED` (D21), never an
+  implicit download (consistent with D38's anti-network-fetch stance). Drive the framework **directly**
+  with injected reporter flags, **not** through the project's `npm test` script (which may not be jest,
+  or may swallow `--json`). Fixtures under `/tmp/nbm-jest/`; lift clean copies into
+  `src/test/resources/fixtures/jest/`.

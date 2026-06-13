@@ -1,6 +1,6 @@
 package dev.nobash.testsupport.git;
 
-import dev.nobash.adapter.out.ecosystem.maven.PathScanningManagerResolver;
+import dev.nobash.adapter.out.ecosystem.PathScanningManagerResolver;
 import dev.nobash.adapter.out.git.GitCommandExecutor;
 import dev.nobash.domain.port.out.ExecResult;
 import dev.nobash.domain.port.out.ExecSpec;

@@ -1,0 +1,12 @@
+{
+  "name": "nbm-jest-acceptance-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Real jest project for the native acceptance IT's npm leg (PRD-4 S1 / #59). Carries a deliberately-failing test so run_tests returns ok=false with a failures[].kind=\"test\" finding. node_modules is NOT committed: the --no-install invariant (D38) requires it to be installed out-of-band by CI (npm install) before the IT runs; the IT receives this dir via the nbm.it.jest.project.dir system property.",
+  "scripts": {
+    "test": "jest"
+  },
+  "devDependencies": {
+    "jest": "^30.0.0"
+  }
+}

@@ -54,3 +54,40 @@ Traps surfaced during design, and why they are traps.
   `mvn -B clean test` against the **identical tree**. A fresh `git worktree` checkout has a clean
   `target/`, so worktree-based gating (e.g. orchestrate) never hits it — only a reused working tree
   does. **After a pull/merge, run `mvn clean test` before trusting serde-introspection results.**
+- **G17 — macOS arm64 native binaries must be code-signed or the OS SIGKILLs them — even when
+  delivered via npm.** Apple Silicon enforces signing on *all* native ARM64 code: an unsigned,
+  corrupt, or linker-only signature is not a warning — the kernel kills the process (`SIGKILL`),
+  and the user **cannot bypass** it. npm does **not** exempt you: the smoking gun is OpenAI's
+  codex CLI (`openai/codex#21199`, May 2026), installed via `npm install -g`, whose Darwin ARM64
+  binary fails to spawn with `Unknown system error -88` — an `npm`-channel install hitting the exact
+  arm64 signing wall. The fix is an **ad-hoc** signature (`codesign -s -`, free) applied **in CI
+  after all post-processing** (strip etc., which can invalidate an earlier signature); do **not**
+  trust GraalVM/linker auto-signing (it may be the corrupt linker-only sig that gets killed). Ad-hoc
+  is *sufficient* for the npm channel specifically because npm-extracted files do **not** carry the
+  `com.apple.quarantine` bit, so Gatekeeper's **notarization** gate never triggers; paid Developer-ID
+  notarization is only needed once a channel sets MOTW/quarantine (curl/browser download, `.mcpb`).
+  (Drives D41.)
+- **G18 — npm `optionalDependencies` for per-platform binaries has install-environment failure
+  modes.** The thin-launcher + per-platform scoped-package model (npm `os`/`cpu` selects the one
+  matching binary) breaks silently under `--no-optional`, restrictive registry
+  mirrors, or airgapped/proxied corporate installs — any of which can skip the platform package so
+  the launcher resolves nothing. (`--ignore-scripts` does **not** belong here — with no `postinstall`
+  the chosen model is immune to it; it bites only the rejected download model below.) Two
+  non-negotiables follow: **publishing order** — every
+  `@no-bash-mcp/<os>-<arch>` platform package must be published **before** the main launcher, or its
+  `optionalDependencies` resolve against a registry that does not yet have them (a race that yields a
+  broken install). And **no `postinstall`-download fallback** — fetching the binary at install time
+  is both fragile (the same `--ignore-scripts`/proxy/airgap failure modes, now harder to diagnose)
+  and a supply-chain vector (unverified network fetch during install) that directly contradicts a
+  tool whose thesis is *removing* a dangerous permission. Instead the launcher **fails clear**:
+  name the platform and point to the deferred secondary channel. (Drives D38; see D40.)
+- **G19 — `.mcpb` (MCP Bundle) has no manifest integrity/signing fields and `platform_overrides`
+  is keyed by OS, not arch (no `${arch}`).** The `.mcpb` manifest carries **zero** integrity or
+  signing fields, so trust must come from an external framework (e.g. mpak) — weak for a tool whose
+  whole value is security. Worse for packaging: `platform_overrides` is keyed by `process.platform`
+  (`win32`/`darwin`/`linux`) **only**, with no per-architecture variable, so a single bundle cannot
+  carry the right binary for both `darwin-arm64` and a future `darwin-x64` — per-arch packaging
+  forces **one bundle per OS×arch** (or yet another launcher shim inside the bundle). Combined with
+  the fact that `.mcpb` sets MOTW/quarantine (re-triggering the paid-notarization gate that the npm
+  channel avoids per G17), this is why `.mcpb` is a **deferred secondary** channel, not the v1 primary.
+  (Drives D44.)

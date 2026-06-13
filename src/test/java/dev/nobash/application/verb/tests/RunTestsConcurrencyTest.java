@@ -80,8 +80,12 @@ class RunTestsConcurrencyTest {
     }
 
     private static RunTestsUseCase useCaseWith(CommandExecutorPort port, ModuleLock lock) {
-        return new RunTestsUseCase(port, new ArgvBuilder(), new TestsFlagPolicy(),
-                new RawOutputStash(), lock);
+        // Single-adapter list (Maven) so selection always resolves to one — these tests encode the
+        // per-module RESOURCE_BUSY concurrency invariant (D22), never AMBIGUOUS_SCOPE.
+        return new RunTestsUseCase(port,
+                java.util.List.of(
+                        new dev.nobash.adapter.out.ecosystem.maven.MavenEcosystemAdapter(port, new ArgvBuilder())),
+                new TestsFlagPolicy(), new RawOutputStash(), lock);
     }
 
     private static Path mavenProject(Path dir) throws IOException {
@@ -291,12 +295,9 @@ class RunTestsConcurrencyTest {
         }
     }
 
-    /** Write a real PASSED Surefire report into the spec's MCP-injected reports dir. */
+    /** Write a real PASSED Surefire report into the spec's default reports dir (target/surefire-reports). */
     private static void writePassedReport(ExecSpec spec) {
-        String token = spec.argv().stream()
-                .filter(a -> a.startsWith("-Dsurefire.reportsDirectory="))
-                .findFirst().orElseThrow(() -> new AssertionError("no reportsDirectory injected"));
-        Path dir = Path.of(token.substring("-Dsurefire.reportsDirectory=".length()));
+        Path dir = Path.of(spec.workingDir()).resolve("target").resolve("surefire-reports");
         try {
             Files.createDirectories(dir);
             byte[] xml;

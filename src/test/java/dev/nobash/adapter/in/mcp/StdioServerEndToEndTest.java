@@ -1,5 +1,6 @@
 package dev.nobash.adapter.in.mcp;
 
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayNameGeneration;
 import org.junit.jupiter.api.DisplayNameGenerator;
 import org.junit.jupiter.api.Test;
@@ -141,6 +142,101 @@ class StdioServerEndToEndTest {
         assertThat(allStdout)
                 .as("tools/call run_tests at a bad path must return the INVALID_PATH envelope")
                 .contains("INVALID_PATH");
+    }
+
+    /**
+     * Regression for the git_status/git_branch MCP outputSchema bug: a repo with NO upstream
+     * tracking branch leaves {@code ahead}/{@code behind}/{@code upstream} null. Those must be
+     * OMITTED from the structuredContent (not serialized as {@code null}), or the framework's
+     * outputSchema validation rejects the envelope ({@code isError}) because the generated schema
+     * types them non-nullable. Drives the REAL server over STDIO (the only layer that runs the
+     * framework's outputSchema validation — unit serde tests do not).
+     */
+    @Test
+    void git_status_and_git_branch_on_an_upstream_less_repo_pass_output_schema_validation() throws Exception {
+        Assumptions.assumeTrue(isOnPath("git"), "SKIPPED: 'git' is not on PATH");
+
+        Path repo = Files.createTempDirectory("git-noupstream");
+        runGit(repo, "init", "-q");
+        Files.writeString(repo.resolve("a.txt"), "v1\n");
+        runGit(repo, "add", ".");
+        // Identity passed inline so the test does not depend on ambient/global git config (CI has none).
+        runGit(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "seed");
+
+        Path outFile = Files.createTempFile("mcp-git-stdout", ".log");
+        Path errFile = Files.createTempFile("mcp-git-stderr", ".log");
+        String java = System.getProperty("java.home") + "/bin/java";
+        String classpath = System.getProperty("java.class.path");
+
+        ProcessBuilder pb = new ProcessBuilder(java, "-cp", classpath, "dev.nobash.Application");
+        pb.redirectOutput(outFile.toFile());
+        pb.redirectError(errFile.toFile());
+        Process proc = pb.start();
+        Thread.sleep(1500);
+        if (!proc.isAlive()) {
+            throw new AssertionError("server exited before any frame was sent.\n--- stderr ---\n"
+                    + Files.readString(errFile));
+        }
+
+        try (OutputStream stdin = proc.getOutputStream();
+             BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(stdin, StandardCharsets.UTF_8))) {
+            send(writer, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\","
+                    + "\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},"
+                    + "\"clientInfo\":{\"name\":\"git-schema-test\",\"version\":\"0\"}}}");
+            Thread.sleep(400);
+            send(writer, "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}");
+            Thread.sleep(200);
+            send(writer, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\","
+                    + "\"params\":{\"name\":\"git_status\",\"arguments\":{\"path\":\"" + jsonPath(repo) + "\"}}}");
+            Thread.sleep(800);
+            send(writer, "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\","
+                    + "\"params\":{\"name\":\"git_branch\",\"arguments\":{\"path\":\"" + jsonPath(repo) + "\"}}}");
+            Thread.sleep(800);
+        }
+        boolean exited = proc.waitFor(20, TimeUnit.SECONDS);
+        if (!exited) {
+            proc.destroy();
+            proc.waitFor(5, TimeUnit.SECONDS);
+            if (proc.isAlive()) proc.destroyForcibly();
+        }
+
+        String allStdout = String.join("\n", nonBlankLines(outFile));
+        // The keystone: NO outputSchema validation failure leaked into a response.
+        assertThat(allStdout)
+                .as("git_status/git_branch on an upstream-less repo must NOT fail MCP outputSchema "
+                        + "validation (null ahead/behind/upstream must be omitted, not rendered)")
+                .doesNotContain("does not match tool outputSchema");
+        // And both verbs returned their success shapes over the wire.
+        assertThat(allStdout).as("git_status returned its gitStatus envelope").contains("gitStatus");
+        assertThat(allStdout).as("git_branch returned its gitBranch envelope").contains("gitBranch");
+    }
+
+    private static String jsonPath(Path p) {
+        return p.toString().replace("\\", "\\\\");
+    }
+
+    private static void runGit(Path dir, String... args) throws Exception {
+        List<String> cmd = new ArrayList<>();
+        cmd.add("git");
+        cmd.add("-C");
+        cmd.add(dir.toString());
+        for (String a : args) {
+            cmd.add(a);
+        }
+        Process p = new ProcessBuilder(cmd).redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
+        if (!p.waitFor(30, TimeUnit.SECONDS) || p.exitValue() != 0) {
+            throw new AssertionError("git " + String.join(" ", args) + " failed (exit " + p.exitValue() + ")");
+        }
+    }
+
+    private static boolean isOnPath(String bin) {
+        try {
+            Process p = new ProcessBuilder(bin, "--version").redirectErrorStream(true).start();
+            return p.waitFor(10, TimeUnit.SECONDS) && p.exitValue() == 0;
+        } catch (IOException | InterruptedException e) {
+            return false;
+        }
     }
 
     private static void send(BufferedWriter writer, String json) throws IOException {

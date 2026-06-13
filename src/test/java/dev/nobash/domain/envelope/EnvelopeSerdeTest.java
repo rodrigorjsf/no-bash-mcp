@@ -204,12 +204,13 @@ class EnvelopeSerdeTest {
     }
 
     @Test
-    void a_clean_git_status_envelope_serializes_null_ahead_behind_and_upstream_as_null()
+    void a_clean_git_status_envelope_omits_null_ahead_behind_and_upstream()
             throws Exception {
-        // No-upstream repo: upstream/ahead/behind are null. Nested-record null fields are
-        // serialized explicitly as null by micronaut-serde (the top-level Envelope omits its own
-        // nulls via @JsonSchema, but the nested GitStatus emits null members) — the agent sees an
-        // unambiguous null rather than a misleading default, which is the contract that matters.
+        // No-upstream repo: upstream/ahead/behind are null. GitStatus is @JsonInclude(NON_NULL), so
+        // these are OMITTED rather than serialized as `null` — the generated MCP @JsonSchema
+        // outputSchema types them non-nullable, so a rendered `null` fails the framework's
+        // structuredContent validation. Absence (not `0`) still conveys "no upstream"; the fields
+        // are not `required`, so an upstream-less status validates.
         GitStatus status = new GitStatus("feature", false, null, null, null,
                 List.of(), List.of(), List.of());
         Envelope env = Envelope.gitStatus("git_status", status, null);
@@ -217,9 +218,11 @@ class EnvelopeSerdeTest {
         String json = mapper.writeValueAsString(env);
 
         assertThat(json).contains("\"branch\":\"feature\"");
-        assertThat(json).contains("\"upstream\":null");
-        assertThat(json).contains("\"ahead\":null");
-        assertThat(json).contains("\"behind\":null");
+        // The null header fields are ABSENT, never rendered as null (which would fail the schema).
+        assertThat(json).doesNotContain("\"upstream\"");
+        assertThat(json).doesNotContain("\"ahead\"");
+        assertThat(json).doesNotContain("\"behind\"");
+        assertThat(json).doesNotContain("null");
         // The empty buckets serialize as empty arrays (stable shape), never null.
         assertThat(json).contains("\"staged\":[]");
         assertThat(json).contains("\"unstaged\":[]");
