@@ -1,16 +1,20 @@
 ##
-## native-acceptance.yml — PRD-4 native release gate, fanned across the Linux tuples.
+## native-acceptance.yml — PRD-4 native release gate, fanned across the build matrix.
 ##
-## S1 (#59) landed the linux-x64 tracer; S3a (#61) fans the SAME `--static-nolibc` model out to
-## `linux-arm64` (aarch64) as a second matrix leg. Both legs share one step list — the only per-tuple
-## variation is the runner and the published artifact name — because aarch64 is a near-clone of x64
-## under the static-link model (G15: GraalVM JDK-25 ships a verified linux-aarch64 image).
+## S1 (#59) landed linux-x64; S3a (#61) added linux-arm64 (same --static-nolibc model); S2 (#60)
+## adds darwin-arm64 on a GitHub-hosted macos-14 (arm64) runner. Each tuple builds the production
+## server to a GraalVM native binary via the single AC flag `-Dpackaging=native-image` and drives
+## that binary end-to-end through the fail-closed NativeAcceptanceIT release gate (a missing binary or
+## a missing per-leg toolchain HARD-FAILS — never a silent skip).
 ##
-## Each leg builds the production server to a `--static-nolibc` GraalVM native binary via the single AC
-## flag `-Dpackaging=native-image` (the native profile supplies the static-link buildArgs and sets
-## nbm.native.required=true), then drives that binary end-to-end through NativeAcceptanceIT — the
-## FAIL-CLOSED release gate: a missing binary or a missing per-leg toolchain HARD-FAILS the build
-## (never a silent skip).
+## Per-OS variation (GraalVM native-image does NOT cross-compile — it builds for the host):
+##   - linux-*  : `--static-nolibc` mostly-static binary (pom `native-linux` profile); the static link
+##                is ASSERTED (no dynamic libz). Build + IT run in one `mvn verify` lifecycle.
+##   - darwin   : system-dynamic binary (pom `native-macos` profile — macOS cannot static-link libc).
+##                TWO-PHASE: build the binary (no IT) → strip → ad-hoc `codesign -s -` → THEN run the
+##                IT against the SIGNED binary. An unsigned/strip-invalidated arm64 binary is SIGKILLed
+##                by the OS and cannot be acceptance-tested at all (openai/codex#21199, D54/D41/G17),
+##                so proving the re-signed binary spawns is the whole point of this leg.
 ##
 ## The IT's four legs each spawn a REAL subprocess from the native image:
 ##   - Maven  : `mvn` on a failing fixture        → ok=false, kind="test"
@@ -20,8 +24,8 @@
 ## plus a stdout-purity assertion (§7) while a subprocess forks. Each verified binary is uploaded as a
 ## named artifact (no-bash-mcp-<tuple>).
 ##
-## `fail-fast: false` keeps one tuple's red leg from cancelling the others — every tuple reports its own
-## verdict so a per-arch regression is pinpointed, not masked.
+## `fail-fast: false` keeps one tuple's red leg from cancelling the others — every tuple reports its
+## own verdict so a per-arch regression is pinpointed, not masked.
 ##
 ## This is a SEPARATE workflow from integration-acceptance.yml (the JVM jar gate) because the native
 ## build is slow (~3 min); it still runs on every PR to the integration branches so a regression in
@@ -46,7 +50,7 @@ on:
 
 jobs:
   native-acceptance:
-    name: native --static-nolibc + acceptance IT (${{ matrix.tuple }})
+    name: native acceptance IT (${{ matrix.tuple }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -56,8 +60,13 @@ jobs:
         include:
           - tuple: linux-x64
             runner: ubuntu-latest
+            os: linux
           - tuple: linux-arm64
             runner: ubuntu-24.04-arm   # GitHub-hosted aarch64 runner (free for public repos)
+            os: linux
+          - tuple: darwin-arm64
+            runner: macos-14           # GitHub-hosted Apple-silicon (arm64) runner
+            os: macos
 
     steps:
       # ── 1. Checkout ────────────────────────────────────────────────────────
@@ -66,7 +75,7 @@ jobs:
 
       # ── 2. GraalVM CE 25 (JDK 25) with native-image ───────────────────────
       # setup-graalvm resolves the host arch (x64 / aarch64) automatically — the same `java-version`
-      # and distribution yield the matching linux-aarch64 image on the arm64 runner (G15).
+      # and distribution yield the matching image on each runner (linux-aarch64, darwin-aarch64; G15).
       - name: Set up GraalVM CE 25
         uses: graalvm/setup-graalvm@v1
         with:
@@ -75,8 +84,9 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: maven
 
-      # ── 3. zlib static lib — REQUIRED by --static-nolibc (needs libz.a) ────
+      # ── 3. zlib static lib — REQUIRED by --static-nolibc (libz.a); Linux only ──
       - name: Install zlib1g-dev (libz.a for --static-nolibc)
+        if: matrix.os == 'linux'
         run: sudo apt-get update && sudo apt-get install -y zlib1g-dev
 
       # ── 4. Go toolchain (the two Go legs spawn `go test`) ─────────────────
@@ -91,7 +101,7 @@ jobs:
         with:
           node-version: "22"
 
-      # ── 6. Tooling sanity (fail early, before the 3-min native build) ─────
+      # ── 6. Tooling sanity (fail early, before the slow native build) ──────
       - name: Verify jq / mvn / go / node
         run: |
           jq --version
@@ -107,30 +117,43 @@ jobs:
         working-directory: src/test/resources/fixtures/jest/project
         run: npm install --no-audit --no-fund
 
-      # ── 8. Build the native binary AND run the fail-closed acceptance gate ─
+      # ════════════════════════════════════════════════════════════════════════
+      #  LINUX path — build + acceptance IT in one fail-closed `mvn verify`.
+      # ════════════════════════════════════════════════════════════════════════
       # `-Dpackaging=native-image` flips the lifecycle (jar → native image) and auto-activates the
-      # `native` profile (static-link buildArgs + nbm.native.required=true). `verify` runs the unit
-      # suite, the native build, then Failsafe — where NativeAcceptanceIT drives the binary. A red IT
-      # blocks the build (the release gate). The jest dir is passed as an absolute path.
-      # `-Dnbm.native.required=true` is passed EXPLICITLY (belt-and-suspenders over the `native`
-      # profile that also sets it): it forwards to the forked Failsafe JVM and guarantees the gate is
-      # armed. Without it, a regression in the profile→systemPropertyVariables binding would let the
-      # IT read `false`, `gate()` would `assumeTrue(false)`, and the WHOLE class would silently skip —
-      # a green build that ran zero legs. With it, a missing binary/toolchain HARD-FAILS instead.
-      - name: Build native + run NativeAcceptanceIT (release gate)
+      # `native` + `native-linux` profiles (static-link buildArgs + nbm.native.required=true). `verify`
+      # runs the unit suite, the native build, then Failsafe — where NativeAcceptanceIT drives the
+      # binary. A red IT blocks the build. `-Dnbm.native.required=true` is passed EXPLICITLY
+      # (belt-and-suspenders over the profile) so the gate is armed even if the profile→Failsafe
+      # property binding regresses; without it the IT could read `false` and silently self-skip.
+      - name: "[linux] Build native + run NativeAcceptanceIT (release gate)"
+        if: matrix.os == 'linux'
         run: |
           mvn -B -Dpackaging=native-image \
             -Dnbm.native.required=true \
             -Dnbm.it.jest.project.dir="$GITHUB_WORKSPACE/src/test/resources/fixtures/jest/project" \
             verify
 
-      # ── 9. Strip + publish the verified binary as a named artifact ────────
+      # ════════════════════════════════════════════════════════════════════════
+      #  MACOS path — TWO-PHASE: build (no IT) → strip → codesign → IT on the SIGNED binary.
+      # ════════════════════════════════════════════════════════════════════════
+      # Phase 1: build ONLY (package, not verify) so the IT does NOT run against the unsigned, about-
+      # to-be-stripped binary. The `native-macos` profile drops --static-nolibc (system-dynamic).
+      - name: "[macos] Build native binary (no IT yet)"
+        if: matrix.os == 'macos'
+        run: mvn -B -Dpackaging=native-image package
+
+      # ── 8/9. Strip the native binary (post-processing; mandated by #60 for macOS) ──
+      # On macOS this INVALIDATES the linker's ad-hoc signature — the binary is now SIGKILLed until
+      # re-signed (the exact failure the next step proves we recover from).
       - name: Strip the native binary
         run: strip target/no-bash-mcp
 
-      # Assert (not just print) the --static-nolibc form: a dynamic libz means the static link
-      # regressed and the binary is no longer portable across glibc hosts (DESIGN.md §8).
-      - name: Assert static linking (libc-only; no dynamic libz)
+      # ── 10. [linux] Assert the --static-nolibc form (no dynamic libz) ─────
+      # A dynamic libz means the static link regressed and the binary is no longer portable across
+      # glibc hosts (DESIGN.md §8).
+      - name: "[linux] Assert static linking (libc-only; no dynamic libz)"
+        if: matrix.os == 'linux'
         run: |
           file target/no-bash-mcp
           ldd target/no-bash-mcp || true
@@ -139,6 +162,32 @@ jobs:
             exit 1
           fi
 
+      # ── 11. [macos] Ad-hoc codesign AFTER strip + verify the signature ────
+      # `codesign -s -` is the free/keyless ad-hoc identity (D54/D41/G17). Re-signing the stripped
+      # binary makes it launchable again; `codesign --verify` asserts the signature is valid before
+      # the IT spawns it.
+      - name: "[macos] Ad-hoc codesign after strip"
+        if: matrix.os == 'macos'
+        run: |
+          codesign --force --sign - target/no-bash-mcp
+          codesign --verify --strict --verbose=2 target/no-bash-mcp
+          codesign --display --verbose=2 target/no-bash-mcp
+
+      # ── 12. [macos] Run NativeAcceptanceIT against the SIGNED binary ──────
+      # Failsafe goals only (the native build already happened in phase 1) so the IT drives the
+      # exact signed artifact, not a rebuild. `-Dnbm.native.required=true` arms the fail-closed gate
+      # outside the `native` profile; `project.build.directory` points the IT at target/.
+      - name: "[macos] Acceptance IT on the signed binary (release gate)"
+        if: matrix.os == 'macos'
+        run: |
+          mvn -B \
+            -Dnbm.native.required=true \
+            -Dnbm.it.jest.project.dir="$GITHUB_WORKSPACE/src/test/resources/fixtures/jest/project" \
+            -Dproject.build.directory="$GITHUB_WORKSPACE/target" \
+            -Dit.test=NativeAcceptanceIT \
+            test-compile failsafe:integration-test failsafe:verify
+
+      # ── 13. Publish the verified binary as a named artifact ───────────────
       - name: Upload ${{ matrix.tuple }} native binary
         uses: actions/upload-artifact@v4
         with:
