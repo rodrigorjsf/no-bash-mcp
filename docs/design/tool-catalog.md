@@ -21,12 +21,14 @@ evidence. See gotcha **G11**.
 | `get_log(handle, filter?)` | Drill-down into a retained run result. | Expands exactly the requested slice (one failure, a test's system-out, full stderr) **without re-running**. The anti-RTK keystone (gotcha **G5**). |
 | `git_status` / `git_diff` / `git_log` / `git_show` / `git_branch` (read-only) | Structured git inspection. | **Read-only only.** Ecosystem-agnostic (one cheap adapter). Highest-volume evidence category (773 calls). **Per-verb normalized shapes parsed from `--porcelain=v2` / `--format=`** (git's machine contract, locale-stable — the D8 "parse the machine format, never scrape stdout" rule applied to git); `git_log` returns a capped commit list with full body via `git_show`; large `git_diff`/`git_show` patches sit behind a `handle` + `get_log`. `manager` is null for git. Mutating git is post-v1. **Five discrete verbs, not a `git(mode)` tool** — see ADR-0001. See decision-log D34. |
 
-## Forge inspection (v1: GitHub read-only)
+## Forge inspection (post-v1 — a later PRD)
 
-Remote, read-only inspection of a code-hosting forge over **HTTP** (ADR-0002, ADR-0003). v1
-implements **GitHub** (`github.com` + GitHub Enterprise Server); GitLab (SaaS + self-hosted) is next.
-Native REST/GraphQL, normalized into the same envelope. **No** generic `api` passthrough. Governed
-by a separate security domain — see [`forge-security-model.md`](./forge-security-model.md).
+Remote, read-only inspection of a code-hosting forge over **HTTP** (ADR-0002, ADR-0003). **Deferred
+to a later PRD** (decision-log **D46**: read-only `pr_*` does not remove `gh` from the dev loop, so it
+does not advance the v1 remove-Bash-on-self thesis — it earns its own PRD; distribution is **PRD-4**).
+The first forge target is **GitHub** (`github.com` + GitHub Enterprise Server); GitLab (SaaS +
+self-hosted) follows. Native REST/GraphQL, normalized into the same envelope. **No** generic `api`
+passthrough. Governed by a separate security domain — see [`forge-security-model.md`](./forge-security-model.md).
 
 | Tool | Purpose | Notes |
 |---|---|---|
