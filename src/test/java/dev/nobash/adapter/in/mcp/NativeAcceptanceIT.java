@@ -87,8 +87,22 @@ class NativeAcceptanceIT {
      */
     static final String JEST_PROJECT_PROP = "nbm.it.jest.project.dir";
 
-    /** The native image name produced by the {@code native} profile (pom {@code <imageName>}). */
+    /**
+     * The native image base name (pom {@code <imageName>}). GraalVM appends {@code .exe} on Windows,
+     * so {@link #resolve_native_binary()} resolves the OS-specific filename.
+     */
     private static final String BINARY_NAME = "no-bash-mcp";
+
+    /**
+     * On Windows the {@code mvn} and {@code npx} legs are SKIPPED, not run: their launchers are
+     * {@code .cmd} shims that {@code ProcessBuilder} cannot spawn without a shell, which the ADR-0008
+     * trusted-launcher posture forbids ({@code CreateProcess} appends only {@code .exe}, never
+     * consults {@code PATHEXT}). This is a documented, fail-clear Windows limitation (#62/G13) — the
+     * {@code go} legs (which use {@code go.exe}) plus spawn + serde + stdout purity still run and
+     * must pass. The skip is explicit (a visible JUnit assumption), never a silent green.
+     */
+    private static final boolean IS_WINDOWS =
+            System.getProperty("os.name", "").toLowerCase().contains("win");
 
     private static Path native_binary;
     private static boolean native_required;
@@ -101,7 +115,8 @@ class NativeAcceptanceIT {
         gate(buildDir != null && !buildDir.isBlank(),
                 "system property '" + BUILD_DIR_PROP + "' is not set (run via mvn verify, not a bare goal)");
 
-        Path binary = Paths.get(buildDir, BINARY_NAME);
+        String binaryName = IS_WINDOWS ? BINARY_NAME + ".exe" : BINARY_NAME;
+        Path binary = Paths.get(buildDir, binaryName);
         gate(Files.isRegularFile(binary) && Files.isExecutable(binary),
                 "native binary not found / not executable at " + binary
                         + " — build it with `mvn -Dpackaging=native-image package` before verify");
@@ -113,6 +128,9 @@ class NativeAcceptanceIT {
     @Test
     void native_run_tests_on_a_failing_maven_project_returns_ok_false_with_a_test_finding()
             throws Exception {
+        Assumptions.assumeFalse(IS_WINDOWS,
+                "SKIPPED on Windows: `mvn` is an `mvn.cmd` shim the native binary cannot spawn without a "
+                        + "shell (ADR-0008 forbids one); documented fail-clear Windows limitation (#62/G13)");
         gate(isOnPath("mvn"), "'mvn' is not on PATH — the Maven leg cannot spawn a build");
         Path project = copyMavenFixture("failing", "FailingTest.java");
 
@@ -161,6 +179,9 @@ class NativeAcceptanceIT {
     @Test
     void native_run_tests_on_a_failing_jest_project_returns_ok_false_with_a_test_finding()
             throws Exception {
+        Assumptions.assumeFalse(IS_WINDOWS,
+                "SKIPPED on Windows: `npx` is an `npx.cmd` shim the native binary cannot spawn without a "
+                        + "shell (ADR-0008 forbids one); documented fail-clear Windows limitation (#62/G13)");
         gate(isOnPath("node"), "'node' is not on PATH — the npm leg needs the Node toolchain");
         gate(isOnPath("npx"), "'npx' is not on PATH — jest is launched through npx (ADR-0008)");
         Path project = resolvePreinstalledJestProject();
@@ -300,7 +321,7 @@ class NativeAcceptanceIT {
                 + " | (.result.structuredContent // (.result.content[0]?.text // empty | fromjson?) // empty)"
                 + " | select(type == \"object\" and has(\"ok\"))";
 
-        ProcessBuilder pb = new ProcessBuilder("jq", "-rc", filter, jsonl.toString());
+        ProcessBuilder pb = new ProcessBuilder("jq", "-rc", "-f", jqProgram(filter).toString(), jsonl.toString());
         Path out = Files.createTempFile("native-jq-out", ".json");
         Path err = Files.createTempFile("native-jq-err", ".txt");
         pb.redirectOutput(out.toFile());
@@ -345,10 +366,24 @@ class NativeAcceptanceIT {
                 .isEqualTo(expected);
     }
 
+    /**
+     * Write a jq program to a temp file so it can be passed via {@code -f <file>}, never as an inline
+     * argv string. Embedded double-quotes in a jq program ({@code "object"}, {@code "ok"},
+     * {@code .kind == "test"}) are STRIPPED by ProcessBuilder argument passing on Windows — they do
+     * not survive Java → {@code CreateProcess} → {@code jq.exe}, so {@code select(type == "object")}
+     * reaches jq as {@code select(type == object)} (a {@code object/0 is not defined} compile error).
+     * Reading the program from a file is cross-platform-safe (proven by #62 on win32-x64).
+     */
+    private static Path jqProgram(String filter) throws IOException {
+        Path program = Files.createTempFile("native-jq-prog", ".jq");
+        Files.writeString(program, filter);
+        return program;
+    }
+
     private static String jq(String json, String filter) throws Exception {
         Path in = Files.createTempFile("native-jqin", ".json");
         Files.writeString(in, json);
-        ProcessBuilder pb = new ProcessBuilder("jq", "-r", filter, in.toString());
+        ProcessBuilder pb = new ProcessBuilder("jq", "-r", "-f", jqProgram(filter).toString(), in.toString());
         Path out = Files.createTempFile("native-jqout", ".txt");
         Path err = Files.createTempFile("native-jqerr", ".txt");
         pb.redirectOutput(out.toFile());
@@ -368,7 +403,7 @@ class NativeAcceptanceIT {
     private static void assertJqTrue(String json, String expression, String description) throws Exception {
         Path in = Files.createTempFile("native-jqein", ".json");
         Files.writeString(in, json);
-        ProcessBuilder pb = new ProcessBuilder("jq", "-e", expression, in.toString());
+        ProcessBuilder pb = new ProcessBuilder("jq", "-e", "-f", jqProgram(expression).toString(), in.toString());
         pb.redirectErrorStream(true);
         Path out = Files.createTempFile("native-jqeout", ".txt");
         pb.redirectOutput(out.toFile());

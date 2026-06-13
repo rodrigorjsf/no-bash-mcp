@@ -98,6 +98,33 @@ structural limit. This server replaces Bash-mediated build/test operations with 
 
 ---
 
+## Platform support
+
+The native binary is built and acceptance-tested in CI on four target tuples (GraalVM JDK-25;
+native-image does **not** cross-compile, so each tuple is built on its own runner). The JVM jar
+(`java -jar`) runs anywhere a JDK 25 runs and has none of the per-tuple caveats below.
+
+| Tuple | Native binary | `run_tests`: Maven / Go / Node |
+|---|---|---|
+| `linux-x64`    | ✅ static (`--static-nolibc`, portable across glibc hosts) | ✅ all three |
+| `linux-arm64`  | ✅ static (`--static-nolibc`)                              | ✅ all three |
+| `darwin-arm64` | ✅ system-dynamic, ad-hoc codesigned                       | ✅ all three |
+| `win32-x64`    | ✅ system-dynamic (`no-bash-mcp.exe`)                      | ⚠️ **Go only** — see below |
+
+**Windows caveat (`win32-x64`).** Maven and Node tests do **not** run from the native Windows
+binary. Their launchers (`mvn.cmd`, `npx.cmd`) are `.cmd` shims, and the server spawns launchers
+directly with **no shell** (the trusted-launcher security posture, ADR-0008) — but Windows
+`CreateProcess` only ever executes `.exe`, never a `.cmd`, without a shell. `go` (a real `go.exe`)
+works. This is a documented, fail-clear limitation, not a silent failure: a Maven/Node `run_tests`
+on Windows returns a clear operational error. On Windows, use the JVM jar (`java -jar`) for
+Maven/Node projects, or run the native binary under **WSL2** (a `linux-x64` / `linux-arm64`
+environment).
+
+**Not produced.** `win32-arm64` and `darwin-x64` native binaries are intentionally not built; use
+the JVM jar on those platforms.
+
+---
+
 ## Registering the server (manual)
 
 v1 requires manual MCP registration. There is no Bootstrap skill yet — registration and Bash
@@ -114,9 +141,10 @@ The packaged jar lands at `target/no-bash-mcp-0.1.0-SNAPSHOT.jar`.
 ### 2. Register in your harness (example: Claude Code `settings.json`)
 
 Add the server under `mcpServers` in your harness configuration. The server communicates over
-STDIO. **Interim launcher (until PRD-4 #44 ships):** `java -jar` is the current way to run the
+STDIO. **Interim launcher (until PRD-5 #44 ships):** `java -jar` is the current way to run the
 server. The decided distribution channel is npm/npx (ADR-0010) — the npm/npx native launcher
-ships in PRD-4 (#44) and will replace this `java -jar` step.
+ships in PRD-5 (#44), consuming the signed native artifacts PRD-4 (#57) produces, and will replace
+this `java -jar` step.
 
 ```json
 {
@@ -154,7 +182,7 @@ Not yet available (roadmap, not shipped):
 - `lint`, `run_task` verbs
 - Forge inspection (`pr_checks`, `pr_view`, `pr_diff`)
 - `describe_project`, `dependencies`
-- npm/npx native binary launcher (PRD-4 #44, ADR-0010)
+- npm/npx native binary launcher (PRD-5 #44, ADR-0010); PRD-4 (#57) ships the signed native artifacts it consumes
 
 ---
 
