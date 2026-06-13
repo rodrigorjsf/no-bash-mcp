@@ -1,0 +1,20 @@
+{
+  "name": "@no-bash-mcp/linux-arm64",
+  "version": "0.0.0",
+  "description": "no-bash-mcp native MCP server binary for linux-arm64/aarch64 (static, --static-nolibc). Carried by the no-bash-mcp launcher and selected by npm os/cpu; not invoked directly.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rodrigorjsf/no-bash-mcp.git"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin/"
+  ],
+  "preferUnplugged": true
+}

@@ -45,12 +45,14 @@ on:
     paths:
       - "src/**"
       - "pom.xml"
+      - "packages/**"
       - ".github/workflows/native-acceptance.yml"
   pull_request:
     branches: [ "master", "development" ]
     paths:
       - "src/**"
       - "pom.xml"
+      - "packages/**"
       - ".github/workflows/native-acceptance.yml"
   workflow_dispatch: {}
   # Reusable: native-release.yml calls this on a version tag to build + acceptance-test all four
@@ -215,7 +217,92 @@ jobs:
             -Dit.test=NativeAcceptanceIT \
             test-compile failsafe:integration-test failsafe:verify
 
-      # ── 13. Publish the verified binary as a named artifact ───────────────
+      # ════════════════════════════════════════════════════════════════════════
+      #  PRD-5 LAUNCHER ACCEPTANCE (folded in from the S1 tracer, generalized to every tuple).
+      # ════════════════════════════════════════════════════════════════════════
+      # Reuses the gate-verified binary already in `target/` (signed, for darwin) — NEVER a second
+      # GraalVM build. Proves the npm packaging layer per tuple: the `npm pack` -> install round-trip
+      # preserves the binary (signature + exec bit on darwin — the codex#21199 question), and the Node
+      # Launcher resolves + spawns it and completes the MCP `initialize` + `tools/list` handshake.
+
+      # ── 13. Launcher resolution + signal-forwarding unit tests (host-portable) ──
+      - name: Launcher unit tests (resolveTuple + signal forwarding)
+        working-directory: packages/launcher
+        run: |
+          set -euo pipefail
+          npm test
+
+      # ── 14. Stage the gated binary into its Platform package, npm pack BOTH, install (no registry) ──
+      - name: "Pack + install Launcher + ${{ matrix.tuple }} Platform package (local-pack)"
+        run: |
+          set -euo pipefail
+          PKG_DIR="packages/${{ matrix.tuple }}"
+          mkdir -p "$PKG_DIR/bin"
+          cp "target/${{ matrix.binary }}" "$PKG_DIR/bin/${{ matrix.binary }}"
+          if [ "${{ matrix.os }}" != "windows" ]; then chmod 755 "$PKG_DIR/bin/${{ matrix.binary }}"; fi
+
+          ( cd "$PKG_DIR"        && npm pack --pack-destination "$RUNNER_TEMP" )
+          ( cd packages/launcher && npm pack --pack-destination "$RUNNER_TEMP" )
+          PLATFORM_TGZ="$(ls "$RUNNER_TEMP"/no-bash-mcp-${{ matrix.tuple }}-*.tgz)"
+          LAUNCHER_TGZ="$(ls "$RUNNER_TEMP"/no-bash-mcp-0.0.0.tgz)"
+
+          CONSUMER="$RUNNER_TEMP/consumer"
+          mkdir -p "$CONSUMER"
+          ( cd "$CONSUMER" && npm init -y >/dev/null \
+              && npm install --no-audit --no-fund "$PLATFORM_TGZ" "$LAUNCHER_TGZ" )
+          echo "── platform-package bin ──"
+          ls -l "$CONSUMER/node_modules/@no-bash-mcp/${{ matrix.tuple }}/bin/" || true
+
+      # ── 15. [darwin] Spike gate: signature + exec bit survived the tar round-trip (pre-chmod) ──
+      - name: "[darwin] Assert signature + exec bit survived npm pack/install (codex#21199)"
+        if: matrix.os == 'macos'
+        run: |
+          set -euo pipefail
+          BIN="$RUNNER_TEMP/consumer/node_modules/@no-bash-mcp/${{ matrix.tuple }}/bin/${{ matrix.binary }}"
+          ls -l "$BIN"; file "$BIN"
+          if [ -x "$BIN" ]; then
+            echo "EXEC-BIT: PRESERVED straight out of the tarball"
+          else
+            echo "::error::exec bit was NOT preserved through the npm tar round-trip"; exit 1
+          fi
+          codesign --verify --strict --verbose=2 "$BIN"
+          echo "CODESIGN: signature VALID after npm pack -> install (codex#21199 round-trip survived)"
+
+      # ── 16. Handshake via the launcher-spawned binary — direct STDIO drive (ALL tuples) ──
+      # The NativeAcceptanceIT direct-drive technique applied to the Launcher: spawns `node index.js`
+      # (cross-platform — no extensionless `.bin` shim spawn, which would hit the Windows `.cmd`/shim
+      # limitation #62/G13), drives initialize + tools/list, asserts the catalog, exits clean on EOF.
+      - name: "Launcher handshake — direct STDIO drive (all tuples)"
+        run: |
+          set -euo pipefail
+          node packages/launcher/scripts/drive-handshake.js \
+            "$RUNNER_TEMP/consumer/node_modules/no-bash-mcp/index.js"
+
+      # ── 17. [darwin] MCP Inspector --cli initialize handshake (the literal AC#3 leg, bounded) ──
+      # darwin-arm64 is the signed-binary leg AC#3 names; it additionally runs MCP Inspector --cli
+      # (the S1-proven path). Bounded by a 180s watchdog (macOS lacks GNU `timeout`) so a teardown
+      # stall fails in ~3 min with diagnostics, never the 45-min job cap.
+      - name: "[darwin] MCP Inspector --cli initialize handshake (AC#3 leg)"
+        if: matrix.os == 'macos'
+        run: |
+          set -euo pipefail
+          LAUNCHER_BIN="$RUNNER_TEMP/consumer/node_modules/.bin/no-bash-mcp"
+          OUT="$RUNNER_TEMP/inspector-out.json"; ERR="$RUNNER_TEMP/inspector-err.log"
+          npx --yes @modelcontextprotocol/inspector@0.14.1 --cli "$LAUNCHER_BIN" \
+            --method tools/list > "$OUT" 2> "$ERR" &
+          NPID=$!
+          ( sleep 180; kill -TERM "$NPID" 2>/dev/null; sleep 5; kill -KILL "$NPID" 2>/dev/null ) &
+          WPID=$!
+          set +e; wait "$NPID"; RC=$?; set -e
+          kill "$WPID" 2>/dev/null || true
+          echo "── inspector stdout ──"; cat "$OUT" || true
+          echo "── inspector stderr ──"; cat "$ERR" || true
+          [ "$RC" -eq 0 ] || { echo "::error::Inspector --cli exited $RC (137/143 => watchdog-killed)"; exit 1; }
+          grep -q '"run_tests"'  "$OUT" || { echo "::error::tools/list missing run_tests"; exit 1; }
+          grep -q '"git_status"' "$OUT" || { echo "::error::tools/list missing git_status"; exit 1; }
+          echo "INSPECTOR HANDSHAKE OK"
+
+      # ── 18. Publish the verified binary as a named artifact ───────────────
       - name: Upload ${{ matrix.tuple }} native binary
         uses: actions/upload-artifact@v4
         with:

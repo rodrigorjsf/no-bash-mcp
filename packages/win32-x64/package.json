@@ -1,0 +1,20 @@
+{
+  "name": "@no-bash-mcp/win32-x64",
+  "version": "0.0.0",
+  "description": "no-bash-mcp native MCP server binary for win32-x64 (system-dynamic, no-bash-mcp.exe). Carried by the no-bash-mcp launcher and selected by npm os/cpu; not invoked directly.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rodrigorjsf/no-bash-mcp.git"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/"
+  ],
+  "preferUnplugged": true
+}

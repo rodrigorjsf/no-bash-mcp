@@ -40,6 +40,26 @@ contributor, human or agent. All durable artifacts are written in **English**.
 - **How** it is structured in code → `DESIGN.md`.
 - **Empirical grounding** → [`docs/research/`](./docs/research/).
 
+## Versioning policy (binding)
+
+The project is **pre-1.0 / in development**. Until there is a **minimally stable first delivery**
+**and** the maintainer's **explicit approval** to ship 1.0.0:
+
+- **The MAJOR version MUST stay `0`.** No contributor — human or agent — may tag or publish a
+  `v1.0.0` or higher (any `major >= 1`) release. This is **not** a judgement call; it requires the
+  maintainer lifting this rule first.
+- **In-development releases use `0.MINOR.PATCH`** and SHOULD carry a SemVer **pre-release identifier**
+  to signal maturity: `-alpha.N` (early, unstable), `-beta.N` (feature-stabilizing, under test),
+  `-rc.N` (release candidate). SemVer orders them `alpha < beta < rc < (final)`, so the ladder is
+  self-sorting. Avoid non-standard tokens such as `omega` — they have no defined SemVer precedence and
+  break tooling that relies on the standard ladder.
+- **Enforcement is fail-closed in the release pipeline.** `native-release.yml` rejects any tag whose
+  major version `>= 1` until this rule is lifted, so an accidental major bump cannot publish. The
+  exact-version pin (D42) and CI version-stamping (D56/D57) operate within `0.x`.
+
+To lift the rule: the maintainer approves the 1.0.0 bump, this section is amended, and the pipeline
+guard is updated in the same change.
+
 ## Documentation conventions
 
 - **Diagram by default.** Whenever a document would be clearer with a structural, flow, sequence, or

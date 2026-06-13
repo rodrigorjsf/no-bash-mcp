@@ -71,7 +71,7 @@ config-write, **not** a new install step:
   "mcpServers": {
     "no-bash-mcp": {
       "command": "npx",
-      "args": ["-y", "no-bash-mcp@1.4.2"]
+      "args": ["-y", "no-bash-mcp@0.1.0"]
     }
   }
 }
@@ -115,7 +115,7 @@ flowchart LR
 
     CI["CI matrix: build + sign + provenance"] --> PKGS["@no-bash-mcp/&lt;os&gt;-&lt;arch&gt; (publish first)"]
     PKGS --> L["no-bash-mcp launcher (optionalDependencies)"]
-    L --> NPX["npx -y no-bash-mcp@1.4.2"]
+    L --> NPX["npx -y no-bash-mcp@0.1.0"]
     NPX --> SEL{"npm os/cpu match?"}
     SEL -->|yes| SHIM["shim resolves binary, spawns, forwards stdio"]
     SEL -->|no| ERR["fail-clear: actionable error, names platform"]
@@ -165,7 +165,7 @@ via browser hits SmartScreen, which an EV cert suppresses).
 
 ### Version pin — exact, never `@latest` (D-PIN)
 
-The Bootstrap skill writes an **exact version pin** (`npx -y no-bash-mcp@1.4.2`), never a float
+The Bootstrap skill writes an **exact version pin** (`npx -y no-bash-mcp@0.1.0`), never a float
 (`@latest`). A tool whose thesis is removing a dangerous permission must **not** silently auto-update
 its own security-critical binary; updates are an explicit action (re-run bootstrap, or bump the pin).
 Reproducible and auditable.

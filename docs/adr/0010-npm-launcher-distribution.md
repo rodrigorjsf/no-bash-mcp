@@ -18,14 +18,14 @@ The `.mcp.json` contract the Bootstrap skill writes:
   "mcpServers": {
     "no-bash-mcp": {
       "command": "npx",
-      "args": ["-y", "no-bash-mcp@1.4.2"]
+      "args": ["-y", "no-bash-mcp@0.1.0"]
     }
   }
 }
 ```
 
-The pin (`no-bash-mcp@1.4.2` — `1.4.2` is illustrative; the real pin is whatever version is current)
-is **exact, never `@latest`**.
+The pin (`no-bash-mcp@0.1.0` — `0.1.0` is illustrative; the real pin is whatever version is current,
+`0.x` pre-1.0 per the binding versioning policy) is **exact, never `@latest`**.
 
 ## Why
 
@@ -81,7 +81,7 @@ guessing game. The decisions below pin how.
   therefore **ad-hoc is sufficient** here. Paid signing (Apple Developer ID + notarization; Windows
   OV/EV certs) is deferred and coupled to the secondary channels (see Consequences).
 
-- **D-PIN — the Bootstrap skill writes an exact version pin.** `npx -y no-bash-mcp@1.4.2`, never a
+- **D-PIN — the Bootstrap skill writes an exact version pin.** `npx -y no-bash-mcp@0.1.0`, never a
   float (`@latest`). A tool whose thesis is removing a dangerous permission must **not** silently
   auto-update its own security-critical binary; updates are an explicit action (re-run bootstrap, or
   bump the pin). The result is reproducible and auditable.
@@ -107,7 +107,7 @@ flowchart LR
     P3 --> L
     P4 --> L
 
-    L --> NPX["npx -y no-bash-mcp@1.4.2"]
+    L --> NPX["npx -y no-bash-mcp@0.1.0"]
     NPX --> SEL{"npm os/cpu match?"}
     SEL -->|yes| SHIM["shim resolves binary, spawns it, forwards stdio"]
     SEL -->|no| ERR["fail-clear: actionable error, names platform"]
