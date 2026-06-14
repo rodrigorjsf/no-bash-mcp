@@ -98,6 +98,39 @@ for this project's shape (~15 verbs + 2 server-side outbound families) [[9]](#r9
 independently-recommended hybrid — and it directly answers the handoff's hexagonal hypothesis with
 the verb-catalog reality.
 
+```mermaid
+flowchart TD
+    Q["~15 verbs + 2 outbound<br/>families: process exec + forge HTTP"]
+
+    Q --> L["Classic Layered<br/>0 mandatory interfaces"]
+    Q --> H["Hexagonal<br/>2 rings · 1 port per outbound family"]
+    Q --> O["Onion / Clean<br/>4 rings · use-case + gateway interfaces"]
+    Q --> V["Pure Vertical-Slice<br/>slice-local + kernel"]
+
+    L --> Lv["under-engineered<br/>no test seam for forge/process adapter"]
+    O --> Ov["over-engineered<br/>no entities/orchestration → ~3x classes"]
+    V --> Vv["hybrid only<br/>shared kernel larger than per-verb code"]
+
+    H --> C["CHOSEN: Hexagonal macro boundary<br/>+ verb-sliced application over shared kernel"]
+    V --> C
+
+    C --> R["correctly sized<br/>adapter count, not project size, drives the choice"]
+
+    classDef question fill:#334155,stroke:#94a3b8,color:#ffffff
+    classDef rejected fill:#c0392b,stroke:#f1a9a0,color:#ffffff
+    classDef contributing fill:#b8860b,stroke:#f0d27a,color:#ffffff
+    classDef chosen fill:#2e8b57,stroke:#9be8bf,color:#ffffff
+
+    class Q question
+    class L,O,Lv,Ov,Vv rejected
+    class H,V contributing
+    class C,R chosen
+
+    linkStyle default stroke:#8892b0
+```
+
+*The four surveyed patterns measured against this project's shape: Layered (under-engineered) and Onion/Clean (over-engineered) are rejected; the chosen path (green) is the **hybrid** — Hexagonal macro boundary fed by Vertical-Slice's feature organization, which is why both feed the `CHOSEN` node while pure VSA alone is "hybrid only."*
+
 ---
 
 ## 3. The chosen architecture in detail

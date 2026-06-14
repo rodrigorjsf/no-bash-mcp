@@ -45,6 +45,58 @@ settle.
 5. **Expected-vs-actual cannot be reliably structured** across all three → keep a `message` + a
    best-effort diff (axis 4).
 
+```mermaid
+flowchart TD
+    U["Universal test-result schema<br/>(one shape, NOT field-frozen here)"]
+
+    JU["JUnit XML<br/>Surefire / Failsafe"]
+    JE["jest --json"]
+    GO["go test -json"]
+
+    JUID["identity: classname + name (~2 levels)"]
+    JEID["identity: file -> ancestorTitles[] -> title"]
+    GOID["identity: Package + Test (+ /-subtests)"]
+
+    FL["file:line + assertion diff<br/>best-effort, DERIVED, nullable<br/>(parsed in 2 of 3; absent in the 3rd)"]
+
+    TO["Test-owned finding<br/>(suite/name + optional path[])"]
+    CF["ContainerFinding<br/>not attributable to one test<br/>(ADR-0007 rule 4)"]
+
+    JUCF["JUnit: suite-level error / setup testcase"]
+    JECF["jest: MODULE-LOAD failure<br/>assertionResults:[] && status:failed<br/>(NOT a beforeAll throw -> that is per-test)"]
+    GOCF["Go: package-level FAIL, no Test<br/>scope=PACKAGE, ERRORED"]
+
+    U --> JU
+    U --> JE
+    U --> GO
+    JU --> JUID
+    JE --> JEID
+    GO --> GOID
+
+    JUID --> FL
+    JEID --> FL
+    GOID --> FL
+
+    U --> TO
+    U --> CF
+    TO -.->|"per-test outcome"| FL
+    CF --> JUCF
+    CF --> JECF
+    CF --> GOCF
+
+    classDef schema fill:#2d6cdf,stroke:#9ec1ff,color:#ffffff
+    classDef eco fill:#b8860b,stroke:#ffe08a,color:#1a1a1a
+    classDef derived fill:#c0392b,stroke:#ffb3a7,color:#ffffff
+    classDef owner fill:#2e8b57,stroke:#a7e8c4,color:#ffffff
+
+    class U,TO schema
+    class JU,JE,GO,JUID,JEID,GOID eco
+    class FL derived
+    class CF,JUCF,JECF,GOCF owner
+```
+
+*Divergence map: one universal schema absorbs three dissimilar formats — identity is a flexible path, `file:line`/diff stay derived & nullable (red), and failures with no single test owner fold into a `ContainerFinding` (green) — where jest's no-owner trigger is a module-load failure with empty `assertionResults`, never a `beforeAll` throw (which is attributed per-test).*
+
 ## Resolved by the spike → [ADR-0007](../adr/0007-normalized-test-result-schema.md) (accepted)
 
 The universal-schema spike (`spikes/s1-schema/`) froze the open items here:
@@ -65,6 +117,37 @@ inconsistent.
 |---|---|---|
 | Go (`go test -json`) | Emits structured `build-output`/`build-fail` JSON events | Folded **into** the graph as `ContainerFinding(ERRORED)` (ADR-0007 rule 4) |
 | Maven (Surefire) | **No** report file is written (Surefire never runs) | Operational error **`REPORT_NOT_PRODUCED`** (+ hint "run `build`"); raw compiler output in the `handle` |
+
+```mermaid
+flowchart TD
+    CFAIL["Compile failure<br/>(9th divergence, D25)"]
+
+    GO["Go: go test -json"]
+    MV["Maven: Surefire"]
+
+    GOEV["Emits structured<br/>build-output / build-fail JSON events<br/>(100% NDJSON, Go 1.26)"]
+    MVNO["No report file written<br/>(Surefire never runs)"]
+
+    FOLD["Fold INTO the graph:<br/>ContainerFinding(scope=PACKAGE, ERRORED)<br/>source = first build-output file:line<br/>(ADR-0007 rule 4, no stdout-scrape -> D8 honored)"]
+    OPERR["Operational error<br/>REPORT_NOT_PRODUCED<br/>(hint: run build; raw compiler output in handle)"]
+
+    CFAIL --> GO
+    CFAIL --> MV
+    GO --> GOEV --> FOLD
+    MV --> MVNO --> OPERR
+
+    classDef trigger fill:#2d6cdf,stroke:#9ec1ff,color:#ffffff
+    classDef eco fill:#b8860b,stroke:#ffe08a,color:#1a1a1a
+    classDef fold fill:#2e8b57,stroke:#a7e8c4,color:#ffffff
+    classDef err fill:#c0392b,stroke:#ffb3a7,color:#ffffff
+
+    class CFAIL trigger
+    class GO,MV,GOEV,MVNO eco
+    class FOLD fold
+    class OPERR err
+```
+
+*Report-absence asymmetry: when a report exists (Go wraps the build failure in NDJSON) it folds into a `ContainerFinding(ERRORED)`; when none is written (Surefire never runs) there is nothing to fold, so the server returns the operational error `REPORT_NOT_PRODUCED` instead of stdout-scraping the compiler.*
 
 The universal schema normalizes **reports**; when a report is absent there is nothing to fold, and
 folding it anyway would require stdout-scraping the compiler output (rejected by D8). The `build` verb
