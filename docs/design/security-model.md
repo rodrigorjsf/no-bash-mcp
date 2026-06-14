@@ -22,6 +22,34 @@ exfiltration, and any other command the *agent* composes on its own.
 | Windows shims | Package-manager launchers (`npm`, `mvn`, `gradle`, `pnpm`) are `.cmd`/`.bat`; the MCP resolves the concrete executable and validates args strictly. The invariant is *no agent-controlled shell string*, not *no OS process facility*. See gotcha **G13**. |
 | Why | Shell-string parsing/sanitization (escaping, metacharacters, aliases) is a known minefield and would break the guarantee. See gotcha **G1**. |
 
+```mermaid
+flowchart LR
+    classDef agent fill:#c0392b,stroke:#f5b7b1,color:#ffffff
+    classDef forbidden fill:#7d3c98,stroke:#d7bde2,color:#ffffff
+    classDef server fill:#2d6cdf,stroke:#9ec1ff,color:#ffffff
+    classDef external fill:#2e8b57,stroke:#a9dfbf,color:#ffffff
+
+    A["Agent"] -->|"only triggers"| CAT["Fixed project-sanctioned<br/>catalog verb"]
+
+    A -.->|cannot| X1["Compose a novel command<br/>(rm -rf, curl | sh)"]
+    A -.->|cannot| X2["Free-form pipes /<br/>composition"]
+    A -.->|cannot| X3["Force a shell string<br/>(/bin/sh -c)"]
+    A -.->|cannot| X4["Invoke repo wrapper<br/>(./mvnw, ./gradlew)"]
+
+    CAT --> SRV["MCP server controls launch"]
+    SRV -->|"argv-array, never shell"| PB["ProcessBuilder"]
+    SRV -->|"trusted manager on PATH"| MGR["mvn / npm / gradle<br/>(absent → TOOL_NOT_INSTALLED)"]
+    PB --> MGR
+    MGR --> EXEC["Project-authored code runs<br/>(accepted, not sandboxed)"]
+
+    class A agent
+    class X1,X2,X3,X4 forbidden
+    class CAT,SRV,PB,MGR server
+    class EXEC external
+```
+
+*Trust boundary: the agent may only trigger a catalog verb; the server — not the agent — owns process launch via an argv-array `ProcessBuilder` against the trusted PATH manager (ADR-0008, G1).*
+
 ## Flag / argument policy
 
 - **Allowlist of flags per operation.** Each operation declares the flags it permits.
@@ -56,6 +84,37 @@ to auto-run.
 - The 4 core verbs (`run_tests`, `build`, `install`, `lint`) stay always-available (they *are* the
   sanctioned operations).
 - The bootstrap skill can scaffold the allow-list by listing detected tasks for the human to pick.
+
+```mermaid
+flowchart TD
+    classDef entry fill:#2d6cdf,stroke:#9ec1ff,color:#ffffff
+    classDef guard fill:#b8860b,stroke:#f0d98c,color:#ffffff
+    classDef reject fill:#c0392b,stroke:#f5b7b1,color:#ffffff
+    classDef pass fill:#2e8b57,stroke:#a9dfbf,color:#ffffff
+
+    REQ["Incoming verb request<br/>(flags + free args)"] --> FLAG{"Flag in<br/>per-operation<br/>allowlist?"}
+    FLAG -->|"no"| DROP["Silently drop flag"]
+    FLAG -->|"defeats verb / blanket -D / verbosity"| FORBID["Never allow-listed<br/>(forbidden category)"]
+    FLAG -->|"yes"| ARG{"Free arg valid<br/>by type?"}
+    DROP --> ARG
+
+    ARG -->|"no"| REJ["Reject"]
+    ARG -->|"yes"| TASK{"run_task?"}
+
+    TASK -->|"core verb<br/>(tests/build/install/lint)"| GUARDS
+    TASK -->|"custom task opted in?"| OPT{"In human<br/>allowlist?"}
+    OPT -->|"no (default)"| FC["Fail-closed: not runnable"]
+    OPT -->|"yes"| GUARDS
+
+    GUARDS["Explicit programmatic guards<br/>(allowlist membership, path-is-dir,<br/>timeout-within-cap, manager-at-path)"] --> RUN["Execute sanctioned operation"]
+
+    class REQ,FLAG,ARG,TASK,OPT entry
+    class GUARDS guard
+    class FORBID,REJ,FC reject
+    class DROP,RUN pass
+```
+
+*Guardrail decision flow: flag allowlist → type-validated free args → `run_task` fail-closed opt-in → explicit programmatic guards; the forbidden flag categories and fail-closed branch can never reach execution (G4, G14).*
 
 ## Policy governance
 

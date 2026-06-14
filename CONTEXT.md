@@ -9,6 +9,34 @@ the architecture lives in `DESIGN.md`.
 
 ## Language
 
+```mermaid
+flowchart TD
+    classDef dispatch fill:#2d6cdf,stroke:#9ec1ff,color:#ffffff
+    classDef output fill:#2e8b57,stroke:#9ff5c6,color:#ffffff
+    classDef security fill:#c0392b,stroke:#ffb3a7,color:#ffffff
+    classDef deploy fill:#b8860b,stroke:#ffe08a,color:#ffffff
+
+    Guardrail[Guardrail] -->|constrains agent to| Verb[Verb]
+    Launcher[Launcher] -->|runs MCP serving| Verb
+    Ecosystem[Ecosystem] -->|has| Manager[Manager]
+    Ecosystem -->|served by| Adapter[Adapter]
+    Adapter -->|maps| Verb
+    Adapter -->|injects| Reporter[Reporter]
+    Adapter -->|normalizes into| Envelope[Envelope]
+    Manager -->|launches build, runs| Reporter
+    Reporter -->|produces report Adapter parses| Adapter
+    Verb -->|returns| Envelope
+    Envelope -->|carries| Handle[Handle]
+    Envelope -->|carries| Finding["Finding (failures[])"]
+
+    class Verb,Manager,Reporter,Ecosystem,Adapter dispatch
+    class Envelope,Handle,Finding output
+    class Guardrail security
+    class Launcher deploy
+```
+
+_How the terms connect: blue = Dispatch & detection, green = Output contract, red = Security framing, gold = Deployment. The Guardrail confines the agent to sanctioned Verbs; an Adapter maps each Verb to a Manager-launched Reporter and normalizes the result into one Envelope, which carries the Handle and Finding (the `failures[]` "Test failure" entries)._
+
 ### Dispatch & detection
 
 **Verb**:
@@ -157,7 +185,11 @@ _Avoid_: scoped package, optional dependency, bundle, archive, variant.
 The small package the harness invokes that, each session, selects the **native binary** matching the
 host's OS and architecture and runs it, forwarding the agent's I/O. Distinct from the **native
 binary** it launches and from the **Bootstrap skill** (Bootstrap registers the MCP once; the
-Launcher selects-and-runs on every session).
+Launcher selects-and-runs on every session). Not to be confused with the *trusted launcher* of
+[ADR-0008](./docs/adr/0008-trusted-manager-launcher-not-repo-wrapper.md): that sense is the
+PATH-resolved system **Manager** (`mvn`/`go`/`npx`) the server spawns to run a build — a different
+concept that merely shares the English word. (The Launcher is itself a Node process that stays
+resident in front of the native binary for the whole session — the footprint trade in ADR-0010.)
 _Avoid_: shim (the impl/code term for the same package), wrapper, loader, trampoline, bootstrap (the Bootstrap skill is a separate concept).
 
 ### Forge inspection

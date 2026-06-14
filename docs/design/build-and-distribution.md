@@ -71,7 +71,7 @@ config-write, **not** a new install step:
   "mcpServers": {
     "no-bash-mcp": {
       "command": "npx",
-      "args": ["-y", "no-bash-mcp@1.4.2"]
+      "args": ["-y", "no-bash-mcp@0.1.0"]
     }
   }
 }
@@ -84,9 +84,12 @@ hash (`dist.integrity`, SHA-512) plus the exact version pin (the npx model has *
 lockfile**, so reproducibility rests on exact pins, not a checked-in `package-lock.json`).
 
 **Honest tension (stated, not hidden):** "Why native" above sells the binary as *runs without a
-runtime installed*, yet npm reintroduces a **Node** dependency — for **install**, not **execution**.
-Node is near-certain present because Claude Code itself ships via npm, and execution remains a pure
-native process.
+runtime installed*, yet npm reintroduces a **Node** dependency at **both** install (package
+resolution) **and** runtime — the **Launcher** is a Node process that stays in front of the native
+binary for the whole session, piping stdio (see *Accepted cost* below, D45). Node is near-certain
+present because Claude Code itself ships via npm. What stays runtime-free is the server's *work*:
+the actual MCP operations run in the **native binary**, not in Node — but a Node launcher process is
+resident alongside it the whole session.
 
 ### Topology — `optionalDependencies` only, zero runtime download (D-TOPOLOGY)
 
@@ -112,7 +115,7 @@ flowchart LR
 
     CI["CI matrix: build + sign + provenance"] --> PKGS["@no-bash-mcp/&lt;os&gt;-&lt;arch&gt; (publish first)"]
     PKGS --> L["no-bash-mcp launcher (optionalDependencies)"]
-    L --> NPX["npx -y no-bash-mcp@1.4.2"]
+    L --> NPX["npx -y no-bash-mcp@0.1.0"]
     NPX --> SEL{"npm os/cpu match?"}
     SEL -->|yes| SHIM["shim resolves binary, spawns, forwards stdio"]
     SEL -->|no| ERR["fail-clear: actionable error, names platform"]
@@ -162,7 +165,7 @@ via browser hits SmartScreen, which an EV cert suppresses).
 
 ### Version pin — exact, never `@latest` (D-PIN)
 
-The Bootstrap skill writes an **exact version pin** (`npx -y no-bash-mcp@1.4.2`), never a float
+The Bootstrap skill writes an **exact version pin** (`npx -y no-bash-mcp@0.1.0`), never a float
 (`@latest`). A tool whose thesis is removing a dangerous permission must **not** silently auto-update
 its own security-critical binary; updates are an explicit action (re-run bootstrap, or bump the pin).
 Reproducible and auditable.

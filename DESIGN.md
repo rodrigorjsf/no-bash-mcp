@@ -43,6 +43,54 @@ decision and its rejected alternatives are recorded in
 - **Domain types are reflection-free**: Java records annotated `@Serdeable @Introspected` (+
   `@JsonSchema` on tool I/O), GraalVM-native-ready.
 
+```mermaid
+flowchart TB
+    classDef ext fill:#b8860b,stroke:#ffd97a,color:#ffffff
+    classDef adapter fill:#2e8b57,stroke:#8ff0bd,color:#ffffff
+    classDef app fill:#2d6cdf,stroke:#9ec1ff,color:#ffffff
+    classDef core fill:#7d3cc4,stroke:#cba9f2,color:#ffffff
+
+    AGENT[Agent]
+    MGR[Build managers on PATH<br/>mvn / npm / go]
+    GH[Forge HTTP<br/>GitHub / GHES]
+
+    subgraph ADAPTERS[adapter/ — driver + driven adapters]
+        INMCP["adapter/in/mcp<br/>@Tool beans = the inbound adapter<br/>(no inbound port — transport is config)"]
+        ECO["adapter/out/ecosystem<br/>maven · node · go"]
+        FORGE["adapter/out/forge<br/>github"]
+    end
+
+    subgraph APP[application/ — verb-sliced use-cases]
+        VERB["verb/* (tests, build, lint, install,<br/>deps, task, project, log, git, forge)"]
+        POLICY["policy/ (flag · run_task · instance allowlists)"]
+        DISPATCH["dispatch/ (validate → port → normalize → envelope)"]
+    end
+
+    subgraph CORE[domain/ — pure, reflection-free shared kernel]
+        PORTS["port/out<br/>CommandExecutorPort · ForgePort"]
+        TYPES["envelope/ · result/ (Finding graph) · error/"]
+    end
+
+    AGENT --> INMCP
+    INMCP --> VERB
+    VERB --> DISPATCH
+    DISPATCH --> POLICY
+    DISPATCH --> PORTS
+    PORTS --> ECO
+    PORTS --> FORGE
+    ECO --> MGR
+    FORGE --> GH
+
+    class AGENT,MGR,GH ext
+    class INMCP,ECO,FORGE adapter
+    class VERB,POLICY,DISPATCH app
+    class PORTS,TYPES core
+
+    linkStyle default stroke:#8892b0
+```
+
+*Hexagonal layering: the only two outbound ports (`CommandExecutorPort`, `ForgePort`) sit on the pure-domain boundary; the `@Tool` bean is itself the inbound adapter (no inbound port), and there are exactly two driven adapters — no `out/harness/` in the server module (§8).*
+
 Rejected (with evidence in the survey): classic layered (no seam → forge untestable), Onion/Clean
 (no entities/orchestration → ~3× class count for pass-through verbs), pure vertical-slice (shared
 kernel > per-verb code → use the hybrid), full-ceremony hexagonal (use-case interface per verb is
@@ -216,8 +264,40 @@ agent → @Tool bean (adapter/in/mcp)
       → serialize envelope (P9 neutralization) → stdout JSON-RPC
 ```
 
-This flow was exercised end-to-end by the prototype for `run_tests` (Maven + Go) and `pr_checks`,
-including the file-vs-stdout report-source routing (§5) and the `get_log` drill-down.
+```mermaid
+flowchart TB
+    classDef ext fill:#b8860b,stroke:#ffd97a,color:#ffffff
+    classDef adapter fill:#2e8b57,stroke:#8ff0bd,color:#ffffff
+    classDef app fill:#2d6cdf,stroke:#9ec1ff,color:#ffffff
+    classDef core fill:#7d3cc4,stroke:#cba9f2,color:#ffffff
+
+    AGENT[Agent]
+    TOOL["@Tool bean<br/>adapter/in/mcp"]
+    UC["verb use-case<br/>application/verb/*"]
+    VAL["validate input<br/>Bean Validation + security guards"]
+    PRE["preflight (run_tests/build)<br/>deps out-of-sync → DEPS_NOT_INSTALLED"]
+    PORT["CommandExecutorPort / ForgePort<br/>domain/port/out — the only outbound seam"]
+    ADP["ecosystem normalizer<br/>adapter/out/*"]
+    MGR["trusted system manager on PATH<br/>mvn / npm / go (ADR-0008, never ./mvnw)"]
+    ENV["build Envelope<br/>+ retain result in run-cache → return Handle"]
+    OUT["serialize envelope (P9 neutralization)<br/>→ stdout JSON-RPC"]
+
+    AGENT --> TOOL --> UC --> VAL --> PRE --> PORT
+    PORT --> ADP --> MGR
+    MGR --> ADP
+    ADP -->|normalize raw output → NormalizedRun| ENV
+    ENV --> OUT --> AGENT
+
+    class AGENT ext
+    class MGR ext
+    class TOOL,ADP adapter
+    class UC,VAL,PRE,ENV,OUT app
+    class PORT core
+
+    linkStyle default stroke:#8892b0
+```
+
+*The real shipped happy path: the use-case reaches the trusted Launcher (`mvn`/`npm` on PATH) only **through** `CommandExecutorPort` and an ecosystem adapter — never a direct manager call — and the response is normalized into the common Envelope (with `manager` present only for ecosystem verbs, §6) before P9 neutralization on the way out.*
 
 **`run_task` — the highest-security-stakes verb (slice `verb/task/`).** It runs a *project-defined*
 task, never a core verb, and carries the strictest dispatch: an **opt-in, fail-closed allowlist**
@@ -289,6 +369,37 @@ already fully decided, so re-modeling them would have validated nothing).
 - **`RESOURCE_BUSY` (ADR-0005):** mutating verbs (`build`/`run_tests` per resolved target; `install`
   per manager) fail-fast on same-resource collision; read verbs are unrestricted. Never hidden
   blocking (it interacts badly with the caller's `timeout`).
+
+```mermaid
+flowchart TB
+    classDef entry fill:#2d6cdf,stroke:#9ec1ff,color:#ffffff
+    classDef guard fill:#b8860b,stroke:#ffd97a,color:#ffffff
+    classDef fail fill:#c0392b,stroke:#f5a6a0,color:#ffffff
+    classDef pass fill:#2e8b57,stroke:#8ff0bd,color:#ffffff
+
+    REQ["mutating verb<br/>build / run_tests / install"]
+    LOCK{same-resource<br/>collision?}
+    BUSY["operational-error<br/>code = RESOURCE_BUSY (ADR-0005)<br/>fail-fast, never hidden blocking"]
+    RUN[run via port → manager]
+    FLOOR{"ok() container-aware<br/>AND process exit == 0?"}
+    GREEN[ok = true → success envelope]
+    RED["ok = false<br/>(FAILED/ERRORED Finding, no-test-owner<br/>container, or non-zero exit — G5 floor)"]
+
+    REQ --> LOCK
+    LOCK -->|yes| BUSY
+    LOCK -->|no| RUN --> FLOOR
+    FLOOR -->|yes| GREEN
+    FLOOR -->|no| RED
+
+    class REQ entry
+    class LOCK,FLOOR guard
+    class BUSY,RED fail
+    class GREEN,RUN pass
+
+    linkStyle default stroke:#8892b0
+```
+
+*Two resilience guards: the concurrency guard returns `RESOURCE_BUSY` rather than blocking on a same-resource collision (§6), and the anti-false-green exit-code floor (§2 counting rule) keeps `ok()` container-aware and treats any non-zero process exit as failure — so a run whose only failure is a no-test-owner container or a non-zero exit can never report green.*
 
 ---
 
@@ -397,6 +508,42 @@ From [`docs/research/testing-stack-research.md`](./docs/research/testing-stack-r
   `jq -e`), against the **packaged** artifact in the Failsafe `verify` phase.
 - **Security tests are first-class:** argv-never-a-shell-string, flag allowlist, `RESOURCE_BUSY` on
   collision, secret-never-logged, SSRF rejection, untrusted-content neutralization (P9).
+
+```mermaid
+flowchart TB
+    classDef stage fill:#2d6cdf,stroke:#9ec1ff,color:#ffffff
+    classDef guard fill:#c0392b,stroke:#f5a6a0,color:#ffffff
+    classDef safe fill:#2e8b57,stroke:#8ff0bd,color:#ffffff
+
+    REQ[Verb request from agent]
+
+    subgraph S1["1 — input validation"]
+        FLAG["flag allowlist, unknown dropped (D4)"]
+        TASK["run_task opt-in allowlist, fail-closed (D19)"]
+        SSRF["forge instance allowlist → SSRF reject (D14 area, fail-closed)"]
+    end
+
+    subgraph S2["2 — controlled invocation"]
+        ARGV["argv array via ProcessBuilder<br/>never /bin/sh -c (D3)"]
+        TRUST["trusted manager on PATH, never ./mvnw (ADR-0008)"]
+    end
+
+    subgraph S3["3 — P9 outbound neutralization"]
+        NEUT["repo/CI-log/PR-body content neutralized<br/>+ marked untrusted (D14)"]
+    end
+
+    OK[Envelope → stdout]
+
+    REQ --> FLAG --> TASK --> SSRF --> ARGV --> TRUST --> NEUT --> OK
+
+    class FLAG,TASK,SSRF,ARGV,TRUST,NEUT guard
+    class REQ stage
+    class OK safe
+
+    linkStyle default stroke:#8892b0
+```
+
+*The guardrail pipeline (not a sandbox): the agent never supplies a command line — input validation gates flags/tasks/instances, controlled invocation builds an argv array against the trusted PATH manager, and every repo-derived byte returned is neutralized and marked untrusted (P9) before it reaches the agent.*
 
 ---
 
