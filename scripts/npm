@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+#
+# scripts/npm — an `npm`/`npx` that works in NON-INTERACTIVE shells.
+#
+# WHAT  A thin wrapper that runs npm through the node binary mise installed, bypassing the
+#       broken `npm` shim on PATH. `scripts/npm exec -- <pkg>` is the `npx` equivalent.
+#
+# WHY   The host `npm`/`npx` on PATH (`~/.local/bin/npm`) is a stale mise reshim wrapper that
+#       resolves npm-cli.js under a nonexistent lib dir. It only works in an INTERACTIVE fish,
+#       where `config.fish` runs `mise activate` and prepends the real node bin to PATH.
+#       The Claude Code Bash tool (and `fish -c`, cron, CI shells) run a NON-interactive
+#       /bin/bash that never sources config.fish, so plain `npm` breaks with MODULE_NOT_FOUND.
+#
+# WHEN  Any time a script — or the Claude Code Bash tool — needs npm/npx in this repo.
+#       In your own interactive fish terminal plain `npm` already works; you don't need this.
+#
+# HOW   scripts/npm view no-bash-mcp version
+#       scripts/npm publish --access public
+#       scripts/npm exec -- @mermaid-js/mermaid-cli -i in.mmd -o out.png      # npx-equivalent
+#
+# NOTE  npm publish needs an interactive TTY for the passkey/WebAuthn 2FA challenge; from a
+#       non-TTY shell it falls back to `--otp` and fails EOTP. Publishing is maintainer-HITL.
+#
+set -euo pipefail
+
+# Prefer a concrete mise node install (highest X.Y.Z; skip the 22 / 22.11 / latest symlinks).
+node_dir=$(ls -d "$HOME"/.local/share/mise/installs/node/*/ 2>/dev/null \
+  | grep -E '/[0-9]+\.[0-9]+\.[0-9]+/$' | sort -V | tail -1 || true)
+
+if [ -n "${node_dir:-}" ] && [ -x "${node_dir}bin/node" ] \
+   && [ -f "${node_dir}lib/node_modules/npm/bin/npm-cli.js" ]; then
+  exec "${node_dir}bin/node" "${node_dir}lib/node_modules/npm/bin/npm-cli.js" "$@"
+fi
+
+# Fallback: let mise resolve node (puts npm on PATH for the child).
+if command -v mise >/dev/null 2>&1; then
+  exec mise exec node -- npm "$@"
+fi
+
+echo "scripts/npm: no working node/npm found (is a mise node version installed?)" >&2
+exit 127
