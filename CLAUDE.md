@@ -82,6 +82,26 @@ Five canonical triage roles using their default label names. See `docs/agents/tr
 
 Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 
+## Automation scripts (`scripts/`)
+
+Deterministic, repeatable agent-ops procedures live in [`scripts/`](./scripts/). **Prefer the
+script over re-deriving the steps** — each one encodes hard-won traps so they are not re-suffered.
+Every script carries a `WHAT / WHY / WHEN / HOW` header comment; read it before first use.
+
+| Script | Use it when |
+|---|---|
+| [`scripts/npm`](./scripts/npm) | You need `npm`/`npx` from the Bash tool or any non-interactive shell. Plain `npm` resolves a broken shim there (the working `npm` exists only in interactive fish via `mise activate`). `scripts/npm exec -- <pkg>` is the `npx` equivalent. |
+| [`scripts/verify-npm-release.sh`](./scripts/verify-npm-release.sh) `<version>` | A `v*` release run is green and you must close the **verification ceiling** — proves all 5 packages are live, provenance attached, and `latest` not hijacked by a prerelease. A green CI job alone is not proof. |
+| [`scripts/release-mcp.sh`](./scripts/release-mcp.sh) `<version> [--dry-run]` | Cutting an in-dev release. Enforces the D58 pre-1.0 policy (fail-closed on `major>=1`), tags+pushes, polls the run to its **real** conclusion (never trusts `gh run watch`), then runs the registry verify. Scoped-package OIDC bootstrap is HITL and out of scope (see the handoff). |
+| [`scripts/mermaid-gate.sh`](./scripts/mermaid-gate.sh) `[file.md ...]` | After adding/editing any Mermaid diagram, before committing. Extracts every block and renders to PNG (fails on parse error); then eyeball `/tmp/mermaid-gate/*.png`. Needs `libasound2t64`. Pairs with [`.claude/rules/diagrams.md`](./.claude/rules/diagrams.md). |
+
+**Standing rule — export repeatable procedures.** Whenever you hit a multi-step procedure that is
+deterministic and likely to recur (release, registry verification, a gating/render check, an
+environment workaround), **capture it as a `scripts/` script** with a `WHAT / WHY / WHEN / HOW`
+header comment instead of re-deriving it inline, and add a row to the table above. If the script is
+also useful to a human maintainer, the header comment is its documentation. This saves tokens and
+makes the procedure auditable and reproducible.
+
 ## Applied Learning
 
 When something fails repeatedly, when User has to re-explain, or when a workaround is found for a platform/tool
@@ -93,3 +113,6 @@ time in future sessions.
 - gh blocked by WSL DNS hijack? `curl --resolve api.github.com:443:<github-IP>` + `gh auth token` (git-SSH unaffected).
 - STDIO-driving IT: drain stdout line-by-line (`BufferedReader`), not `readAllBytes` (blocks till process exit).
 - Native binary build: `mvn package -Dpackaging=native-image` (single flag); needs `JAVA_HOME`=GraalVM + `zlib1g-dev`.
+- Non-interactive shell (Bash tool): use `scripts/npm`, not `npm` (mise activates only in interactive fish).
+- Verifying/cutting an npm release? Use `scripts/release-mcp.sh` / `scripts/verify-npm-release.sh`, not ad-hoc commands.
+- After editing Mermaid diagrams, run `scripts/mermaid-gate.sh` before committing (needs `libasound2t64`).
