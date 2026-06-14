@@ -55,6 +55,50 @@ reintroduce arbitrary-request composition.
 5. **Transport security.** TLS trust via the system pool plus an optional private CA; **never**
    disable verification.
 
+### Trust boundary (areas 1 + 2)
+
+The boundary that makes forge inspection safe is the split between what the **agent** controls and
+what the **operator provisions** as non-agent-mutable config. The agent can only trigger fixed,
+read-only verbs; it never supplies the token (resolved by-reference, read-scoped) and never adds or
+redirects an instance (the allowlist is human-authored, fail-closed, default-deny — and doubles as
+the anti-SSRF egress policy).
+
+```mermaid
+flowchart LR
+    classDef agent fill:#c0392b,stroke:#f5b7b1,color:#ffffff
+    classDef core fill:#2d6cdf,stroke:#9ec1ff,color:#ffffff
+    classDef opcfg fill:#b8860b,stroke:#f0d58c,color:#ffffff
+    classDef ext fill:#2e8b57,stroke:#a3e4c1,color:#ffffff
+
+    A[Agent input<br/>untrusted, prompt-injectable]
+    V[Fixed read-only forge verbs<br/>no api passthrough — ADR-0003]
+    EG{Egress allowlist check<br/>fail-closed, default deny}
+
+    subgraph OP[Operator-provisioned — non-agent-mutable config]
+        TK[Token by-reference<br/>env-var name / secret path<br/>read-scoped, runtime-resolved]
+        AL[Instance allowlist<br/>human-authored, fail-closed]
+    end
+
+    FI[Allowlisted forge instance<br/>TLS: system pool + optional CA]
+
+    A -->|may only trigger| V
+    V -->|attaches| TK
+    V -->|target validated against| AL
+    AL --> EG
+    EG -->|allowed| FI
+    EG -->|not allowlisted| X[Denied — no forge access]
+
+    class A agent
+    class V,EG core
+    class TK,AL opcfg
+    class FI ext
+    class X agent
+```
+
+*Forge inspection is post-v1 (D46): the boundary above is the target model, not shipped surface. The
+gold side is operator-provisioned and non-agent-mutable; read-scope is an operator-provisioning
+obligation, not a code-enforced write-rejection.*
+
 ## Relationship to the command-execution guarantee
 
 The two guarantees are **orthogonal and additive** — neither subsumes the other. Command execution

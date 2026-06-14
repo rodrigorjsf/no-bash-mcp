@@ -21,6 +21,59 @@ evidence. See gotcha **G11**.
 | `get_log(handle, filter?)` | Drill-down into a retained run result. | Expands exactly the requested slice (one failure, a test's system-out, full stderr) **without re-running**. The anti-RTK keystone (gotcha **G5**). |
 | `git_status` / `git_diff` / `git_log` / `git_show` / `git_branch` (read-only) | Structured git inspection. | **Read-only only.** Ecosystem-agnostic (one cheap adapter). Highest-volume evidence category (773 calls). **Per-verb normalized shapes parsed from `--porcelain=v2` / `--format=`** (git's machine contract, locale-stable — the D8 "parse the machine format, never scrape stdout" rule applied to git); `git_log` returns a capped commit list with full body via `git_show`; large `git_diff`/`git_show` patches sit behind a `handle` + `get_log`. `manager` is null for git. Mutating git is post-v1. **Five discrete verbs, not a `git(mode)` tool** — see ADR-0001. See decision-log D34. |
 
+### Verb taxonomy
+
+The catalog groups by category: a **test/build/dep** execution group, the ecosystem-agnostic
+**git read-only** group (five discrete verbs, not `git(mode)` — ADR-0001), the **drill-down**
+keystone `get_log`, and the **post-v1 forge** group. Core verbs are shipped; forge `pr_*` is
+deferred to a later PRD (D46).
+
+```mermaid
+flowchart TB
+    classDef exec fill:#2d6cdf,stroke:#9ec1ff,color:#ffffff
+    classDef gitv fill:#2e8b57,stroke:#a6e3c0,color:#ffffff
+    classDef drill fill:#b8860b,stroke:#f0d98c,color:#1a1a1a
+    classDef forge fill:#c0392b,stroke:#f3b1a8,color:#ffffff
+
+    subgraph Exec["Execution (test / build / deps) — shipped"]
+        RT[run_tests]
+        BLD[build]
+        INS[install]
+    end
+
+    subgraph Git["git read-only — shipped"]
+        GS[git_status]
+        GD[git_diff]
+        GL[git_log]
+        GH[git_show]
+        GB[git_branch]
+    end
+
+    subgraph Drill["Drill-down keystone — shipped"]
+        GLG[get_log]
+    end
+
+    subgraph Forge["Forge pr_* — post-v1 / roadmap"]
+        PC[pr_checks]
+        PV[pr_view]
+        PD[pr_diff]
+    end
+
+    RT -->|handle| GLG
+    BLD -->|handle| GLG
+    GD -->|handle| GLG
+    GH -->|handle| GLG
+    PC -->|handle| GLG
+    PD -->|handle| GLG
+
+    class RT,BLD,INS exec
+    class GS,GD,GL,GH,GB gitv
+    class GLG drill
+    class PC,PV,PD forge
+```
+
+*Verb catalog by category: blue execution verbs, green git read-only verbs, and red post-v1 forge verbs all funnel large results through the amber `get_log` drill-down keystone (G5).*
+
 ## Forge inspection (post-v1 — a later PRD)
 
 Remote, read-only inspection of a code-hosting forge over **HTTP** (ADR-0002, ADR-0003). **Deferred

@@ -5,7 +5,7 @@
 
 > **v1 shipped.** The shipped surface is `run_tests` (Maven, Node/jest, Go), `build`, `install`,
 > the five git read verbs, and `get_log`. Forge verbs and the npm/npx native binary launcher
-> (PRD-4 #44) are roadmap items, not yet available.
+> (PRD-5 #44) are roadmap items, not yet available.
 
 A Micronaut MCP server that replaces an agent's Bash tool with safe, structured, token-efficient
 operations so the Bash permission can be removed entirely. The agent never composes a command; the
@@ -202,14 +202,18 @@ Not yet available (roadmap, not shipped):
 
 ## Going deeper
 
-The corpus documents every design decision; the README only summarizes the shipped surface.
+The corpus documents every design decision; the README only summarizes the shipped surface. Many of
+these documents carry **Mermaid diagrams** (color-keyed structural, flow, and state views),
+so the corpus is as much a **visual study book** as a written one — start with the worked-example
+lesson below for the architecture read at a glance.
 
 | Document | What it covers |
 |---|---|
-| [`DESIGN.md`](./DESIGN.md) | Architecture (hexagonal, package structure, schema, output contract, testing posture, version baseline) |
+| [`docs/lessons/`](./docs/lessons/) | Worked-example lessons that read the ADRs and decision-log back as teachable principles — resilience, security, scalability of an agentic backend — with Mermaid diagrams throughout |
+| [`DESIGN.md`](./DESIGN.md) | Architecture (hexagonal, package structure, schema, output contract, testing posture, version baseline), with structural and flow diagrams |
 | [`CONTEXT.md`](./CONTEXT.md) | Ubiquitous language — what every term means (Verb, Manager, Reporter, Envelope, Handle, Guardrail, …) |
-| [`docs/design/`](./docs/design/) | Pillars, security model, forge security model, tool catalog, operational model, schema divergence map, roadmap, gotchas, decision log |
-| [`docs/adr/`](./docs/adr/) | Architecture Decision Records (0001–0008) |
+| [`docs/design/`](./docs/design/) | Pillars, security model, forge security model, tool catalog, operational model, schema divergence map, roadmap, gotchas, decision log — several with diagrams |
+| [`docs/adr/`](./docs/adr/) | Architecture Decision Records (0001–0011) |
 | [`docs/research/`](./docs/research/) | Empirical grounding: architecture survey, technology baseline, testing stack, GraalVM/WSL setup |
 | [`prototype/NOTES.md`](./prototype/NOTES.md) | Schema/port validation from three real reports (Maven, jest, Go) |
 | [`spikes/`](./spikes/) | De-risking spike outcomes (universal schema, MCP STDIO, forge read-only) |
