@@ -1,0 +1,4 @@
+# Shell scripts and agent-ops helpers MUST stay LF — a CRLF shebang (`#!/usr/bin/env bash\r`)
+# is a "bad interpreter" error, and CRLF breaks heredocs/awk in these scripts.
+*.sh        text eol=lf
+scripts/**  text eol=lf
