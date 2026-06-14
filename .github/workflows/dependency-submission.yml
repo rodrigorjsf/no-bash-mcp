@@ -1,0 +1,32 @@
+# Submits the Maven dependency graph to GitHub on the right JDK.
+#
+# Replaces GitHub's built-in "Automatic Dependency Submission (Maven)", which runs `mvn validate`
+# on a default JDK (21) and FAILS here: this project and the Micronaut Maven extension
+# (io.micronaut.maven.testresources.TestResourcesLifecycleExtension) are compiled for Java 25
+# (class file version 69.0 > 65.0 → UnsupportedClassVersionError). The built-in feature has no
+# JDK knob, so we run the submission ourselves with Java 25.
+#
+# After merging this, DISABLE the built-in toggle: repo Settings → Advanced Security →
+# "Automatic dependency submission" → off. Otherwise the built-in `submit-maven` check keeps
+# running (and failing) in parallel with this one.
+
+name: Dependency Submission
+
+on:
+  push:
+    branches: [master, development]
+
+permissions:
+  contents: write   # required to submit the dependency snapshot to the dependency graph
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Submit Maven dependency graph
+        uses: advanced-security/maven-dependency-submission-action@v4
