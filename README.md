@@ -4,8 +4,8 @@
 ---
 
 > **v1 shipped.** The shipped surface is `run_tests` (Maven, Node/jest, Go), `build`, `install`,
-> the five git read verbs, and `get_log`. Forge verbs and the npm/npx native binary launcher
-> (PRD-5 #44) are roadmap items, not yet available.
+> the five git read verbs, and `get_log`. The npm/npx native launcher is available (PRD-5 #44 S3,
+> v0.0.1-alpha.2 published). Forge verbs are roadmap items, not yet available.
 
 A Micronaut MCP server that replaces an agent's Bash tool with safe, structured, token-efficient
 operations so the Bash permission can be removed entirely. The agent never composes a command; the
@@ -101,8 +101,9 @@ structural limit. This server replaces Bash-mediated build/test operations with 
 ## Platform support
 
 The native binary is built and acceptance-tested in CI on four target tuples (GraalVM JDK-25;
-native-image does **not** cross-compile, so each tuple is built on its own runner). The JVM jar
-(`java -jar`) runs anywhere a JDK 25 runs and has none of the per-tuple caveats below.
+native-image does **not** cross-compile, so each tuple is built on its own runner).
+
+### Supported tuples (npm/npx channel — v0.0.1-alpha.2 published)
 
 | Tuple | Native binary | `run_tests`: Maven / Go / Node |
 |---|---|---|
@@ -117,63 +118,89 @@ directly with **no shell** (the trusted-launcher security posture, ADR-0008) —
 `CreateProcess` only ever executes `.exe`, never a `.cmd`, without a shell. `go` (a real `go.exe`)
 works. Maven/Node `run_tests` is therefore **unsupported on the native Windows binary**: the
 resolver finds `mvn.cmd`/`npx.cmd` on PATH, but the binary cannot spawn a `.cmd` without a shell, so
-the launch fails. On Windows, use the JVM jar (`java -jar`) for Maven/Node projects, or run the
-native binary under **WSL2** (a `linux-x64` / `linux-arm64` environment). Surfacing this launch
-failure as a *structured* operational error (rather than an unstructured exception) is tracked in
-#71.
+the launch fails. On Windows, run the native binary under **WSL2** (a `linux-x64` / `linux-arm64`
+environment) for Maven/Node projects. Surfacing this launch failure as a *structured* operational
+error (rather than an unstructured exception) is tracked in #71.
 
-**Not produced.** `win32-arm64` and `darwin-x64` native binaries are intentionally not built; use
-the JVM jar on those platforms.
+### Unsupported tuples — fail-clear
 
-**Release artifacts.** Pushing a version tag (`v*`) runs the full 4-tuple matrix as a release gate
-(a red acceptance IT on any tuple blocks the release) and publishes the verified binaries as GitHub
-Release assets in a stable layout that PRD-5's npm/npx launcher consumes:
+`win32-arm64` and `darwin-x64` (Intel) do not have a GraalVM JDK-25 toolchain (`win32-arm64` has
+none; `darwin-x64` is deprecated upstream — 25.0.1 was the last release). No platform package is
+produced for these tuples. When the launcher runs on one of them it emits a structured JSON error on
+stderr (exit code 78 / `EX_CONFIG`) and exits immediately — it never starts a half-open channel:
 
-| Asset | Tuple |
+```json
+{
+  "error": "no-bash-mcp-launcher",
+  "reason": "unsupported-platform",
+  "platform": "<tuple>",
+  "supported": ["linux-x64", "linux-arm64", "darwin-arm64", "win32-x64"],
+  "hint": "No native binary is produced for this OS/arch. Run the server from the JVM jar instead (java -jar no-bash-mcp.jar), or, on win32-arm64, the win32-x64 binary under emulation."
+}
+```
+
+`win32-arm64` users can run the `win32-x64` build under Windows x64 emulation as a workaround
+(US11). A JVM-jar published distribution channel is **deferred** to the roadmap (it would
+reintroduce the JRE dependency native exists to kill — YAGNI until evidence of a real user
+on an uncovered platform).
+
+### Launcher footprint trade (D45)
+
+The npm/npx channel keeps a **thin Node shim process** in front of the native MCP binary for the
+whole session (it pipes stdio), adding roughly **30–50 MB RSS** plus the Node dependency. The
+server's *operations* run in the native binary; Node is the delivery and session-level bridge.
+This is an accepted, eyes-open trade — esbuild does the same, and Node is present anyway because
+Claude Code itself ships via npm. See [ADR-0010](./docs/adr/0010-npm-launcher-distribution.md) and
+[`docs/design/build-and-distribution.md`](./docs/design/build-and-distribution.md).
+
+### Release artifacts
+
+Pushing a version tag (`v*`) runs the full 4-tuple matrix as a release gate
+(a red acceptance IT on any tuple blocks the release) and publishes both the GitHub Release assets
+and the npm packages:
+
+| Asset / package | Tuple |
 |---|---|
-| `no-bash-mcp-linux-x64`     | linux-x64 (static)     |
-| `no-bash-mcp-linux-arm64`   | linux-arm64 (static)   |
-| `no-bash-mcp-darwin-arm64`  | darwin-arm64 (signed)  |
-| `no-bash-mcp-win32-x64.exe` | win32-x64              |
-| `SHA256SUMS`                | integrity manifest     |
+| `no-bash-mcp-linux-x64` / `@no-bash-mcp/linux-x64`     | linux-x64 (static)    |
+| `no-bash-mcp-linux-arm64` / `@no-bash-mcp/linux-arm64`  | linux-arm64 (static)  |
+| `no-bash-mcp-darwin-arm64` / `@no-bash-mcp/darwin-arm64`| darwin-arm64 (signed) |
+| `no-bash-mcp-win32-x64.exe` / `@no-bash-mcp/win32-x64`  | win32-x64             |
+| `SHA256SUMS`                                             | integrity manifest    |
 
 ---
 
 ## Registering the server (manual)
 
-v1 requires manual MCP registration. There is no Bootstrap skill yet — registration and Bash
-permission removal are done by hand.
+Registration is a manual step — the Bootstrap skill (#78, not yet landed) that will auto-write
+`.mcp.json` is not yet available. Add the server block by hand.
 
-### 1. Build the server jar
-
-```bash
-mvn package -DskipTests
-```
-
-The packaged jar lands at `target/no-bash-mcp-0.1.0-SNAPSHOT.jar`.
-
-### 2. Register in your harness (example: Claude Code `settings.json`)
+### 1. Register in your harness (example: Claude Code `settings.json`)
 
 Add the server under `mcpServers` in your harness configuration. The server communicates over
-STDIO. **Interim launcher (until PRD-5 #44 ships):** `java -jar` is the current way to run the
-server. The decided distribution channel is npm/npx (ADR-0010) — the npm/npx native launcher
-ships in PRD-5 (#44), consuming the signed native artifacts PRD-4 (#57) produces, and will replace
-this `java -jar` step.
+STDIO. Use the **npx channel** (primary, available now — PRD-5 S3, [ADR-0010]):
 
 ```json
 {
   "mcpServers": {
     "no-bash-mcp": {
-      "command": "java",
-      "args": ["-jar", "/absolute/path/to/no-bash-mcp-0.1.0-SNAPSHOT.jar"]
+      "command": "npx",
+      "args": ["-y", "no-bash-mcp@0.0.1-alpha.2"]
     }
   }
 }
 ```
 
-Replace `/absolute/path/to/` with the actual location of the jar.
+The pin (`0.0.1-alpha.2`) is **exact, never `@latest`** (D42/D37) — a security-critical binary
+must not auto-update silently; bump the pin explicitly when upgrading. npm's `os`/`cpu` fields
+select the correct platform package automatically on install.
 
-### 3. Remove the Bash permission (the point of the server)
+**Uncovered platforms.** On `win32-arm64` or `darwin-x64` (Intel), no native binary is available
+(see *Unsupported tuples — fail-clear* above). The launcher emits a structured JSON error on stderr
+and exits without starting a channel. Those platforms may use the JVM jar as a manual fallback
+(build from source with `mvn package -DskipTests` and run `java -jar target/no-bash-mcp-<version>-SNAPSHOT.jar`);
+a published JVM-jar distribution channel is deferred to the roadmap.
+
+### 2. Remove the Bash permission (the point of the server)
 
 After confirming the MCP verbs work, **manually remove the agent's Bash permission** from your
 harness configuration. The exact mechanism is harness-specific (e.g. a `permissions.deny` entry
@@ -192,11 +219,15 @@ Shipped in v1:
 - P9 outbound neutralization of untrusted repo-derived strings
 - Concurrency guard (`RESOURCE_BUSY`) on overlapping runs
 
+Also shipped (PRD-5 S3):
+- npm/npx native binary launcher (`no-bash-mcp` + `@no-bash-mcp/<os>-<arch>` platform packages, v0.0.1-alpha.2; [ADR-0010](./docs/adr/0010-npm-launcher-distribution.md))
+
 Not yet available (roadmap, not shipped):
 - `lint`, `run_task` verbs
 - Forge inspection (`pr_checks`, `pr_view`, `pr_diff`)
 - `describe_project`, `dependencies`
-- npm/npx native binary launcher (PRD-5 #44, ADR-0010); PRD-4 (#57) ships the signed native artifacts it consumes
+- Bootstrap auto-write of `.mcp.json` for the npx channel (#78, halted/needs-triage)
+- Published JVM-jar distribution channel (for uncovered platforms; deferred — YAGNI)
 
 ---
 
