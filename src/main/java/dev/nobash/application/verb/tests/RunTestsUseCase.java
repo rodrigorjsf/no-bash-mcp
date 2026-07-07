@@ -266,7 +266,25 @@ public class RunTestsUseCase {
         // Launch the planned spec through the format-blind executor seam — part of the invariant
         // spine (ADR-0011). The port is shared (build/git use it too) and stays format-blind: the
         // use-case holds the ExecSpec/ExecResult carriers, never a Maven/Go type.
-        ExecResult result = executor.execute(plan.spec());
+        //
+        // A launcher that RESOLVED on PATH (TOOL_NOT_INSTALLED already passed) can still fail to
+        // SPAWN — on Windows mvn/npx are .cmd/.bat shims the no-shell launcher (ADR-0008) spawns
+        // directly with no /bin/sh, so pb.start() throws an IOException the executor wraps as
+        // UncheckedIOException. Fail CLOSED with a structured MANAGER_NOT_SPAWNABLE envelope rather
+        // than let an unstructured exception escape the Envelope contract (#71). The catch is scoped
+        // to THIS call only: the buildExec wipe above owns REPORT_DIR_UNWRITABLE and the module
+        // lock's own UncheckedIOException signals (run()'s tryAcquire/release) must not be hijacked.
+        final ExecResult result;
+        try {
+            result = executor.execute(plan.spec());
+        } catch (UncheckedIOException e) {
+            return Envelope.operationalError(VERB, ErrorCode.MANAGER_NOT_SPAWNABLE,
+                    "The '" + ecosystem.managerBinary() + "' launcher resolved on PATH but could not "
+                            + "be spawned (on Windows the launcher is a .cmd/.bat shim the no-shell "
+                            + "launcher cannot execute directly).",
+                    "Run the server under the JVM jar, or on Linux/WSL2, where the launcher is "
+                            + "directly spawnable.");
+        }
 
         // Timeout intercept (issue #6) — BEFORE the report-absence check: a timeout killed before
         // any report is written leaves the source empty and would otherwise mislabel as
