@@ -192,6 +192,20 @@ concept that merely shares the English word. (The Launcher is itself a Node proc
 resident in front of the native binary for the whole session — the footprint trade in ADR-0010.)
 _Avoid_: shim (the impl/code term for the same package), wrapper, loader, trampoline, bootstrap (the Bootstrap skill is a separate concept).
 
+**Self-version**:
+The release version a running server instance reports as its own — the identity the **Bootstrap
+skill** pins in `.mcp.json` and the value a client reads back from the server. One value per binary,
+**coherent** with the published **Launcher** and **Platform package** of the same release. A
+non-release build's self-version corresponds to no published release.
+_Avoid_: build number, git SHA, `@latest`, application version (unqualified).
+
+**Version coherence**:
+The property that a binary's **self-version** and the published **Launcher**/**Platform package**
+version of the same release are the *same* value — so an exact pin the **Bootstrap skill** writes
+resolves. A property of a release, not a step performed on one.
+_Avoid_: version sync, alignment, matching (each implies a reconciliation step; coherence is
+by-construction).
+
 ### Forge inspection
 
 **Forge**:

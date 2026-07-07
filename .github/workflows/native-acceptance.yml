@@ -59,7 +59,17 @@ on:
   # tuples as the release gate, then publishes the artifacts. workflow_call ignores the push `paths`
   # filter above, so a tag always builds the full matrix regardless of which files the tag commit
   # touched (the tags/paths interaction is otherwise undefined — #63).
-  workflow_call: {}
+  workflow_call:
+    inputs:
+      revision:
+        description: >-
+          Maven ${revision} stamped into the binary's build-stamped self-version (ADR-0012 #78).
+          native-release.yml passes the `v*` tag's $VERSION here so serverInfo.version equals the
+          published npm version (resolvability coherence). Empty default → the pom's 0.1.0-SNAPSHOT
+          on direct PR/push runs (plumbing coherence).
+        required: false
+        type: string
+        default: ""
 
 jobs:
   native-acceptance:
@@ -97,6 +107,21 @@ jobs:
       # ── 1. Checkout ────────────────────────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
+
+      # ── 1b. Resolve the build revision (ADR-0012 #78) ─────────────────────
+      # native-release.yml passes the `v*` tag's $VERSION as inputs.revision; a direct PR/push run
+      # has no input → the pom's 0.1.0-SNAPSHOT default. Bound via env (not inlined) per the
+      # workflow-injection guidance; stamped into the binary through -Drevision below and asserted
+      # back out of `initialize` serverInfo.version by the handshake step (D-GATE).
+      - name: Resolve build revision
+        env:
+          INPUT_REVISION: ${{ inputs.revision }}
+        run: |
+          set -euo pipefail
+          REV="${INPUT_REVISION:-}"
+          if [ -z "$REV" ]; then REV="0.1.0-SNAPSHOT"; fi
+          echo "REVISION=$REV" >> "$GITHUB_ENV"
+          echo "Resolved build revision: $REV"
 
       # ── 2. GraalVM CE 25 (JDK 25) with native-image ───────────────────────
       # setup-graalvm resolves the host arch (x64 / aarch64) automatically — the same `java-version`
@@ -159,6 +184,7 @@ jobs:
         run: |
           mvn -B -Dpackaging=native-image \
             -Dnbm.native.required=true \
+            -Drevision="$REVISION" \
             -Dnbm.it.jest.project.dir="$GITHUB_WORKSPACE/src/test/resources/fixtures/jest/project" \
             verify
 
@@ -169,7 +195,7 @@ jobs:
       # to-be-stripped binary. The `native-macos` profile drops --static-nolibc (system-dynamic).
       - name: "[macos] Build native binary (no IT yet)"
         if: matrix.os == 'macos'
-        run: mvn -B -Dpackaging=native-image package
+        run: mvn -B -Dpackaging=native-image -Drevision="$REVISION" package
 
       # ── 8/9. Strip the native binary (post-processing; mandated by #60 for macOS) ──
       # On macOS this INVALIDATES the linker's ad-hoc signature — the binary is now SIGKILLed until
@@ -272,7 +298,12 @@ jobs:
       # The NativeAcceptanceIT direct-drive technique applied to the Launcher: spawns `node index.js`
       # (cross-platform — no extensionless `.bin` shim spawn, which would hit the Windows `.cmd`/shim
       # limitation #62/G13), drives initialize + tools/list, asserts the catalog, exits clean on EOF.
+      # EXPECT_SERVER_VERSION arms the ADR-0012 D-GATE coherence check: the driver asserts the
+      # binary's `initialize` serverInfo.version == the $REVISION it was built with — plumbing
+      # coherence on a PR (0.1.0-SNAPSHOT), full resolvability coherence on the release tag ($VERSION).
       - name: "Launcher handshake — direct STDIO drive (all tuples)"
+        env:
+          EXPECT_SERVER_VERSION: ${{ env.REVISION }}
         run: |
           set -euo pipefail
           node packages/launcher/scripts/drive-handshake.js \

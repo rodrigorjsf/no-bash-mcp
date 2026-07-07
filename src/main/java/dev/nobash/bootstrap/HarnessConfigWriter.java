@@ -12,13 +12,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The Claude Code <b>harness-config writer</b> for the bootstrap skill (decision-log D15/D16,
- * {@code docs/design/bootstrap-and-deployment.md}). Given the current on-disk config state and the
- * jar path, it produces two declarative permission documents:
+ * The Claude Code <b>harness-config writer</b> for the bootstrap skill (decision-log D15/D16/D61,
+ * {@code docs/design/bootstrap-and-deployment.md}, ADR-0012). Given the current on-disk config state
+ * and the server's build-stamped self-version, it produces two declarative permission documents:
  *
  * <ol>
  *   <li>{@code .mcp.json} — registers the {@code no-bash-mcp} MCP server under {@code mcpServers}
- *       (launcher {@code java -jar <jar>}). Carries ONLY {@code mcpServers}.</li>
+ *       (launcher {@code npx -y no-bash-mcp@<version>} — an EXACT pin, never {@code @latest}, D42).
+ *       Carries ONLY {@code mcpServers}.</li>
  *   <li>{@code .claude/settings.json} — carries the transitional dangerous-git deny-list as a
  *       {@code permissions.deny} array (from {@link DangerousGitDenyList}). A <b>declarative</b>
  *       permission-config entry, NOT a {@code PreToolUse} bash hook (D16).</li>
@@ -37,8 +38,12 @@ import java.util.Map;
  *
  * <h3>Determinism</h3>
  * <p>Insertion-ordered maps ({@code LinkedHashMap}) plus a stable build order give byte-stable
- * output for the golden-file tests; the jar path is an <b>injected input</b> (a parameter), never
- * computed from the environment, so the produced {@code .mcp.json} is identical on every machine.</p>
+ * output for the golden-file tests; the version is an <b>injected input</b> (a parameter), never
+ * computed from the environment, so the produced {@code .mcp.json} is identical on every machine.
+ * The writer stays a pure faithful emitter (ADR-0012 D-PUREWRITER): the caller supplies the running
+ * binary's self-version (sourced from the filtered {@code application.yml} via {@code serverInfo}); a
+ * non-release build supplies {@code 0.1.0-SNAPSHOT}, so the emitted pin fails loud at {@code npx} use
+ * rather than resolving something wrong.</p>
  *
  * <p>Placement: top-level {@code dev.nobash.bootstrap}, outside the Domain/Application/Adapter
  * triad (DESIGN §3/§8 — a separate deliverable, implements neither outbound port). It depends only
@@ -49,8 +54,8 @@ public final class HarnessConfigWriter {
     /** The MCP server id registered under {@code mcpServers} (matches {@code application.yml}). */
     public static final String SERVER_ID = "no-bash-mcp";
 
-    /** The launcher command — {@code java -jar <jar>} over STDIO is the only supported launcher. */
-    static final String LAUNCHER_COMMAND = "java";
+    /** The launcher command — {@code npx -y no-bash-mcp@<version>} over STDIO (ADR-0010/ADR-0012). */
+    static final String LAUNCHER_COMMAND = "npx";
 
     private static final String MCP_FILE = ".mcp.json";
     private static final String SETTINGS_DIR = ".claude";
@@ -82,17 +87,18 @@ public final class HarnessConfigWriter {
      * suggestion.
      *
      * @param configDir the harness config directory (created if absent)
-     * @param jarPath   the absolute path to the packaged server jar (an injected input, so the
-     *                  produced {@code .mcp.json} is machine-stable)
+     * @param version   the running binary's build-stamped self-version (an injected input, so the
+     *                  produced {@code .mcp.json} is machine-stable); emitted as the exact
+     *                  {@code no-bash-mcp@<version>} pin
      * @return the two produced paths plus the assertable remove-Bash suggestion
      * @throws IOException if a file cannot be read or written
      */
-    public HarnessConfigResult write(Path configDir, String jarPath) throws IOException {
+    public HarnessConfigResult write(Path configDir, String version) throws IOException {
         Files.createDirectories(configDir);
 
         Path mcpConfigPath = configDir.resolve(MCP_FILE);
         Map<String, Object> mcpTree = readTree(mcpConfigPath);
-        mergeMcpRegistration(mcpTree, jarPath);
+        mergeMcpRegistration(mcpTree, version);
         writeTree(mcpConfigPath, mcpTree);
 
         Path settingsDir = configDir.resolve(SETTINGS_DIR);
@@ -110,14 +116,14 @@ public final class HarnessConfigWriter {
     /**
      * Union the {@code no-bash-mcp} server registration into the {@code mcpServers} map, preserving
      * any foreign server entries. The {@code no-bash-mcp} entry is set/overwritten (idempotent
-     * re-registration with the current jar path); other servers are untouched.
+     * re-registration with the current self-version); other servers are untouched.
      */
-    private void mergeMcpRegistration(Map<String, Object> tree, String jarPath) {
+    private void mergeMcpRegistration(Map<String, Object> tree, String version) {
         Map<String, Object> servers = childMap(tree, KEY_MCP_SERVERS);
 
         Map<String, Object> entry = new LinkedHashMap<>();
         entry.put("command", LAUNCHER_COMMAND);
-        entry.put("args", List.of("-jar", jarPath));
+        entry.put("args", List.of("-y", SERVER_ID + "@" + version));
         servers.put(SERVER_ID, entry);
     }
 
