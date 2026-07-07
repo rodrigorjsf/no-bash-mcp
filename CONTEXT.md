@@ -221,7 +221,7 @@ an arbitrary request and break the forge guarantee.
 _Avoid_: api, passthrough, escape hatch (deliberately absent).
 
 **Forge adapter**:
-The per-forge unit that maps a forge verb to authenticated REST/GraphQL calls and normalizes the
+The per-forge unit that maps a forge verb to authenticated HTTP calls and normalizes the
 result into the common envelope. Built on configurable seams — base URL, auth, TLS trust, proxy,
 tier/version — so SaaS and self-hosted (GHES, GitLab Self-Managed) share one abstraction. Distinct
 from an ecosystem adapter (local subprocess) and a harness adapter (permission config).
@@ -230,7 +230,8 @@ _Avoid_: connector, client, integration.
 **Forge guarantee**:
 The forge-side counterpart to the command-execution guarantee: the agent cannot compose an arbitrary
 HTTP request; it can only trigger fixed read-only forge verbs against a configured, allowlisted
-instance. Enforced at the token layer, not by hiding verbs.
+instance. On a tokened instance, read-only is enforced at the token layer; on a tokenless instance
+it holds by the absence of any credential — never by merely hiding verbs.
 _Avoid_: forge sandbox.
 
 **Read-scoped token**:

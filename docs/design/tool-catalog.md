@@ -74,27 +74,33 @@ flowchart TB
 
 *Verb catalog by category: blue execution verbs, green git read-only verbs, and red post-v1 forge verbs all funnel large results through the amber `get_log` drill-down keystone (G5).*
 
-## Forge inspection (post-v1 — a later PRD)
+## Forge inspection (PRD-6 — GitHub-first, decision-log D62)
 
-Remote, read-only inspection of a code-hosting forge over **HTTP** (ADR-0002, ADR-0003). **Deferred
-to a later PRD** (decision-log **D46**: read-only `pr_*` does not remove `gh` from the dev loop, so it
-does not advance the v1 remove-Bash-on-self thesis — it earns its own PRD; distribution is **PRD-4**).
-The first forge target is **GitHub** (`github.com` + GitHub Enterprise Server); GitLab (SaaS +
-self-hosted) follows. Native REST/GraphQL, normalized into the same envelope. **No** generic `api`
+Remote, read-only inspection of a code-hosting forge over **HTTP** (ADR-0002, ADR-0003). Deferred
+from v1 by **D46**; scoped as **PRD-6** by **D62**. The first forge target is **GitHub** —
+`github.com` shippable; **GHES seams built, claim withheld** (URL construction modeled; operational
+seams unvalidated against any real instance). GitLab (SaaS + self-hosted) follows in a later PRD.
+**REST-only** (spike s3 proved every verb + drill-down without GraphQL; D62). **No** generic `api`
 passthrough. Governed by a separate security domain — see [`forge-security-model.md`](./forge-security-model.md).
 
 | Tool | Purpose | Notes |
 |---|---|---|
-| `pr_checks(path?, ref?)` | CI check status for a PR / branch / commit. | Per-check `name` + `conclusion` (pass/fail/pending) + a `handle`. The failing check's log is drilled into via `get_log(handle)` — the `gh run view --log-failed` pattern, **non-lossy, no separate log verb**. The entry point of the CI-gated loop. |
-| `pr_view(path?, pr?)` | PR metadata in one call. | State, mergeable, review status, head/base, checks summary. |
-| `pr_diff(path?, pr?)` | The PR's diff. | Reuses `handle` + `get_log` for large diffs (same as `git_diff`). |
+| `pr_checks(path?, ref?, repo?)` | CI check status for a PR / branch / commit. | Per-check `name` + `conclusion` (pass/fail/pending) + a `handle`. Folds **check-runs AND the Commit Statuses API**, paginating (`Link rel=next`) to exhaustion — a failed check on page 2 or a red status must flip `ok=false` (spike-s3 production obligations). The failing check's log is drilled into via `get_log(handle)` — the `gh run view --log-failed` pattern, **non-lossy, no separate log verb**. The entry point of the CI-gated loop. |
+| `pr_view(path?, pr?, repo?)` | PR metadata in one call. | State, mergeable, review status, head/base, checks summary. |
+| `pr_diff(path?, pr?, repo?)` | The PR's diff. | Reuses `handle` + `get_log` for large diffs (same as `git_diff`). |
 
 - **Canonical verb prefix `pr_`** — "pull request (GitHub) / merge request (GitLab)". Forge-neutral
   logical verbs (P5); each tool's description disambiguates per forge.
 - **`pr_list` is deferred** (low local evidence; YAGNI until it appears).
 - Forge verbs **return a `handle`**, so `get_log` is the universal drill-down for CI logs and diffs.
-- Instance (base URL) + read-scoped token are **per-instance, human-authored, non-agent-mutable**
-  config — never agent input. See `forge-security-model.md`.
+- Instance (base URL) + optional token-ref are **per-instance, human-authored, non-agent-mutable**
+  config — never agent input — supplied via Micronaut external config (`MICRONAUT_CONFIG_FILES` →
+  `forge.instances[]`). **Token is OPTIONAL per instance** (D62): tokenless serves public repos at
+  the unauthenticated rate limit; rate-limit / private-404 fail clear (structured code + hint,
+  no auto-retry). See `forge-security-model.md`.
+- **`repo` override** (D62) — the default mapping parses `git remote get-url origin` and matches the
+  host against the allowlist; the explicit `repo` param disambiguates fork workflows (`origin` =
+  fork) and SSH host aliases. SSRF-neutral: the host still comes only from the allowlist.
 
 ## Output contract
 

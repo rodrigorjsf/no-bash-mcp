@@ -63,9 +63,13 @@
 - **Micronaut MCP STDIO spike** — register a trivial tool on the chosen baseline and confirm STDIO
   transport works end-to-end on the **GA 1.0.0** baseline, **and that the default logger routes off
   stdout** (stderr/file only — never the JSON-RPC channel) (see gotcha **G15**).
-- **Forge read-only spike** — fetch GitHub CI check status + a failed-job log (via `handle`) and a
-  PR view/diff, against `github.com` **and** a GHES-style configurable base URL, normalized into the
-  common envelope. De-risks the self-hosted seams and the forge-side envelope before GitLab.
+- **Forge read-only spike** — **DONE (spike `s3`,** [`spikes/s3-forge/NOTES.md`](../../spikes/s3-forge/NOTES.md)**)**:
+  proved the by-reference token mechanism, pr_view/pr_diff/pr_checks + `get_log` drill-down via REST,
+  the common-envelope fold, and GHES **URL construction** — against `github.com` only. Test-owed
+  residuals now carried by PRD-6 (D62): pagination to exhaustion, Commit-Statuses merge,
+  rate-limit/`Retry-After` handling, a *verified* (non-tautological) 302 no-token-forward control, and
+  native-image external-config binding (the PRD-6 **P0** gate). A follow-up spike against a **real
+  GHES instance** stays owed before GHES support is claimed shippable.
 - **Native-build hardening (the new PRD-4 — decision-log D53)** — the s2 spike proved native only for
   a trivial `PingTool` (dynamic-linked, flat serde, no subprocess, linux). PRD-4 productionizes it:
   move the `native-maven-plugin` profile into `pom.xml`, ship the logback reflection metadata, and
@@ -97,4 +101,11 @@
   distribution channel** (consumes PRD-4's artifacts). Supersedes D46's "Distribution (#44) = PRD-4";
   issue **#44** is re-scoped to **PRD-005** and blocked by the new **PRD-004 (#57)** — slices P0 #58,
   S1 #59, S2 #60, S3a #61, S3b #62, S4 #63. Decisions in decision-log **D53–D55**; ADR-0010 unaffected.
+- Frontier after PRD-5 — **resolved** (2026-07-07): **PRD-6 = forge read-only inspection,
+  GitHub-first** (decision-log **D62**, adversarially reviewed): REST-only, token optional per
+  allowlisted instance, operator config via Micronaut `MICRONAUT_CONFIG_FILES`, a **P0
+  native-external-config gate inside the PRD**, GHES seams built with the claim withheld. Ordering:
+  the v* release closing the D61/#78 pin-resolvability proof lands **before PRD-6 implementation
+  starts**. Chosen over mutating-git verbs (the natural next-PRD candidate), more ecosystems, and
+  task-runner awareness.
 
