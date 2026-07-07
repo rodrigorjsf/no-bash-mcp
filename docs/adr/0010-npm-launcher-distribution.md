@@ -48,8 +48,11 @@ guessing game. The decisions below pin how.
   `args=["-y","no-bash-mcp@<exact-version>"]`. The Bootstrap skill already writes `.mcp.json`, so this
   is a config-write, not a new step. **Honest tension, stated not hidden:** the native-image
   distribution argument (`build-and-distribution.md`, "runs without a JRE installed") sells freedom
-  from a runtime, yet npm reintroduces a **Node** dependency — for *install*, not *execution*. Node is
-  near-certain present (Claude Code ships via npm); execution remains a pure native process.
+  from a runtime, yet npm reintroduces a **Node** dependency at **both** install (package resolution)
+  **and** runtime — the **Launcher** is a thin Node process that stays resident in front of the native
+  binary for the whole session, piping stdio (D45/D-FOOTPRINT). Node is near-certain present (Claude
+  Code ships via npm). The server's *operations* run in the native binary; what stays runtime-free is
+  the server's *work*, not the delivery wrapper.
 
 - **D-TOPOLOGY — `optionalDependencies` only, zero runtime download.** A thin JS shim package
   `no-bash-mcp` declares per-platform scoped packages `@no-bash-mcp/<os>-<arch>` as
@@ -125,7 +128,9 @@ just the data flow.)
 
 - **npm/npx launcher + `optionalDependencies`, zero download (chosen).** npx-transparent, exact
   OS×arch selection via `os`/`cpu`, tamper-evidence from the registry tarball hash + exact pin, origin from provenance, no fragile
-  install-time fetch. Reuses Node, which is present anyway. Pure native footprint at *execution*.
+  install-time fetch. Reuses Node, which is present anyway. The *operations* run in the native
+  binary, but a thin Node shim stays resident for the whole session (D45/D-FOOTPRINT) — Node is
+  required at install **and** runtime, so this is not a pure-native footprint at execution.
 
 - **`.mcpb` (MCP Bundle, ex-DXT) as primary (rejected).** The MCP ecosystem's own one-click desktop
   format (`server.type="binary"`, self-contained, supported by Claude Desktop / Claude Code /
