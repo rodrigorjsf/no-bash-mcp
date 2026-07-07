@@ -116,3 +116,4 @@ time in future sessions.
 - Non-interactive shell (Bash tool): use `scripts/npm`, not `npm` (mise activates only in interactive fish).
 - Verifying/cutting an npm release? Use `scripts/release-mcp.sh` / `scripts/verify-npm-release.sh`, not ad-hoc commands.
 - After editing Mermaid diagrams, run `scripts/mermaid-gate.sh` before committing (needs `libasound2t64`).
+- Raw NUL (0x00) in a source file → git binary-renders it; use the `\0` escape (detect via `python3`).
