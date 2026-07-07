@@ -11,17 +11,27 @@ security domains (see ADR-0002).
 > **"The agent cannot compose an arbitrary HTTP request; it can only trigger fixed, read-only forge
 > verbs against a configured, allowlisted forge instance."**
 
-Read-only is enforced at the **token layer** — a read-scoped credential (`read_api` on GitLab; a
-read-only fine-grained PAT on GitHub) — not merely by omitting write verbs. A read-scoped token is a
-hard capability boundary the agent cannot exceed even under prompt injection.
+On a **tokened** instance, read-only is enforced at the **token layer** — a read-scoped credential
+(`read_api` on GitLab; a read-only fine-grained PAT on GitHub) — not merely by omitting write verbs.
+A read-scoped token is a hard capability boundary the agent cannot exceed even under prompt
+injection.
+
+**Tokens are OPTIONAL per instance (D62).** A **tokenless** instance serves public repos via
+unauthenticated GETs; there read-only holds by the *absence of any credential* — nothing exists to
+leak or to exceed, so the token-layer sentence above scopes to the tokened path. The costs are
+surfaced honestly, never silently: the unauthenticated rate limit (60 req/h; `pr_checks` spends 3–5
+GETs per call) and private-repo 404s fail clear as structured operational errors with remediation
+hints ("configure a read-scoped PAT"), with **no auto-retry** (the `Retry-After` header is surfaced,
+not hammered).
 
 > **This enforcement is a deployment/provisioning obligation, not a code guarantee** (adversarial review
 > of spike `s3`). The code cannot verify a token's scope; the boundary holds only if the **operator
 > provisions an actually read-scoped credential**. Spike `s3` validated the *by-reference resolution*
 > mechanism only — and did so with a **write-capable** OAuth token, so it provides **zero** evidence that
 > a write would be rejected. A `/tdd` test should run a real read-only fine-grained PAT and assert a write
-> verb returns 403; absent that, treat token read-scope as an operator-provisioning requirement, surfaced
-> in the bootstrap docs, never asserted as a code-level guarantee.
+> verb returns 403; **while the shipped surface has no write verbs (PRD-6 is read-only), that test is
+> unrunnable** — token read-scope stays an operator-provisioning requirement, surfaced in the bootstrap
+> docs, never asserted as a code-level guarantee.
 
 **No generic passthrough.** There is deliberately no `api`-style escape hatch (ADR-0003); it would
 reintroduce arbitrary-request composition.
@@ -53,7 +63,8 @@ reintroduce arbitrary-request composition.
    content flowing through the envelope. The neutralize-and-mark-`untrusted` discipline applies with
    **more** weight here than for local output.
 5. **Transport security.** TLS trust via the system pool plus an optional private CA; **never**
-   disable verification.
+   disable verification. `http://` base URLs are a **test-profile-only** affordance (the local stub
+   the deterministic suite drives) — the production config binding rejects them (D62).
 
 ### Trust boundary (areas 1 + 2)
 
@@ -95,9 +106,10 @@ flowchart LR
     class X agent
 ```
 
-*Forge inspection is post-v1 (D46): the boundary above is the target model, not shipped surface. The
-gold side is operator-provisioned and non-agent-mutable; read-scope is an operator-provisioning
-obligation, not a code-enforced write-rejection.*
+*Forge inspection is PRD-6 (D46 deferred it from v1; D62 scoped it): the boundary above is the
+target model, not yet shipped surface. The gold side is operator-provisioned and non-agent-mutable;
+read-scope is an operator-provisioning obligation, not a code-enforced write-rejection — and on a
+tokenless instance (D62) the token node is simply absent.*
 
 ## Relationship to the command-execution guarantee
 
