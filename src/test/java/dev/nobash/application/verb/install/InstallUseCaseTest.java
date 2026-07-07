@@ -13,6 +13,8 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -81,6 +83,20 @@ class InstallUseCaseTest {
         public ExecResult execute(ExecSpec spec) {
             this.capturedSpec = spec;
             return result;
+        }
+    }
+
+    /** A port whose launcher resolves on PATH but whose spawn throws, as on a Windows .cmd shim (#71). */
+    private static final class SpawnFailingExecutor implements CommandExecutorPort {
+        @Override
+        public boolean isManagerInstalled() {
+            return true;
+        }
+
+        @Override
+        public ExecResult execute(ExecSpec spec) {
+            throw new UncheckedIOException("Failed to launch 'npm' command",
+                    new IOException("Cannot run program \"npm\": CreateProcess error=2"));
         }
     }
 
@@ -295,6 +311,25 @@ class InstallUseCaseTest {
             assertThat(env.untrusted())
                     .as("install success has server-authored content only")
                     .isFalse();
+        }
+
+        // ---- #71 — a launcher on PATH that cannot be spawned (Windows .cmd) fails CLOSED with a
+        //      structured MANAGER_NOT_SPAWNABLE envelope, never an unstructured thrown exception ----
+        @Test
+        void a_launcher_that_resolves_but_cannot_be_spawned_returns_MANAGER_NOT_SPAWNABLE_not_a_throw(
+                @TempDir Path dir) throws Exception {
+            Files.writeString(dir.resolve("package.json"), "{}");
+
+            // Must NOT throw — the verb fails closed with a structured operational error (#71).
+            Envelope env = useCaseWith(new SpawnFailingExecutor()).run(dir.toString(), List.of(), null);
+
+            assertThat(env.ok()).isFalse();
+            assertThat(env.error()).as("a non-spawnable launcher must surface as an operational error").isNotNull();
+            assertThat(env.error().code()).isEqualTo(ErrorCode.MANAGER_NOT_SPAWNABLE);
+            assertThat(env.error().message())
+                    .as("the message names the manager that could not be spawned").contains("npm");
+            assertThat(env.error().hint())
+                    .as("the hint points at a spawnable runtime (JVM jar / WSL2)").isNotBlank();
         }
     }
 

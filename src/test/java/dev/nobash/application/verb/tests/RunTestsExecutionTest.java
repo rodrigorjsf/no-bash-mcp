@@ -20,6 +20,8 @@ import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mockito;
 import org.mockito.stubbing.Answer;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -115,6 +117,21 @@ class RunTestsExecutionTest {
                 Files.write(dir.resolve("TEST-fixture-" + (i++) + ".xml"), readBytes(resource));
             }
             return new ExecResult(-1, partialStdout, "", true);
+        });
+    }
+
+    /**
+     * Stub execute() to throw exactly as the real executor does when {@code pb.start()} fails —
+     * the manager resolved on PATH (so {@code isManagerInstalled()} is true) but the launcher is a
+     * non-executable shim the no-shell launcher cannot spawn (Windows {@code mvn}/{@code npx} are
+     * {@code .cmd}/{@code .bat}; {@code CreateProcess} throws {@code IOException error=2}), which
+     * {@code MavenCommandExecutor}/{@code NpmCommandExecutor} wrap as {@link UncheckedIOException}.
+     */
+    private void stubSpawnFailure() {
+        Mockito.when(executor.execute(Mockito.any())).thenAnswer((Answer<ExecResult>) inv -> {
+            capturedSpec.set(inv.getArgument(0));
+            throw new UncheckedIOException("Failed to launch 'mvn' command",
+                    new IOException("Cannot run program \"mvn\": CreateProcess error=2"));
         });
     }
 
@@ -358,6 +375,28 @@ class RunTestsExecutionTest {
         } finally {
             Files.setPosixFilePermissions(reportsDir, PosixFilePermissions.fromString("rwxr-xr-x"));
         }
+    }
+
+    // ---- #71 — a launcher on PATH that cannot be spawned (Windows .cmd) fails CLOSED with a
+    //      structured MANAGER_NOT_SPAWNABLE envelope, never an unstructured thrown exception ----
+    @Test
+    void a_launcher_that_resolves_but_cannot_be_spawned_returns_MANAGER_NOT_SPAWNABLE_not_a_throw(
+            @TempDir Path dir) throws Exception {
+        mavenProject(dir);
+        // The manager resolves on PATH (isManagerInstalled()==true) so TOOL_NOT_INSTALLED does not
+        // fire, but the spawn itself fails — exactly the Windows .cmd-shim case (#71).
+        stubSpawnFailure();
+
+        // Must NOT throw — the verb returns a structured operational error envelope.
+        Envelope env = useCase.run(dir.toString(), List.of(), null);
+
+        assertThat(env.ok()).isFalse();
+        assertThat(env.error()).as("a non-spawnable launcher must surface as an operational error").isNotNull();
+        assertThat(env.error().code()).isEqualTo(ErrorCode.MANAGER_NOT_SPAWNABLE);
+        assertThat(env.error().message())
+                .as("the message names the manager that could not be spawned").contains("mvn");
+        assertThat(env.error().hint())
+                .as("the hint points at a spawnable runtime (JVM jar / WSL2)").isNotBlank();
     }
 
     // ---- issue #6 fixture (f) — timeout mid-run leaving fresh PASSED partials → TIMEOUT, ok=false ----

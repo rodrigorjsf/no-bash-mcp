@@ -143,5 +143,22 @@ public enum ErrorCode {
      * re-run without a target (full-suite). Distinct from {@link #INVALID_TARGET}: that is a
      * type-shape failure caught before any launch; this is an honest "not wired for this ecosystem".
      */
-    UNSUPPORTED_TARGET
+    UNSUPPORTED_TARGET,
+
+    /**
+     * The trusted system manager ({@code mvn}, {@code npx}, …) RESOLVED on {@code PATH} — so
+     * {@link #TOOL_NOT_INSTALLED} did not fire — but the launcher could not be SPAWNED (issue #71).
+     * On Windows the manager is a {@code .cmd}/{@code .bat} shim; the no-shell trusted launcher
+     * (ADR-0008) spawns {@code argv[0]} directly with no {@code /bin/sh -c}, and Windows
+     * {@code CreateProcess} only appends {@code .exe}, never runs a {@code .cmd} → {@code pb.start()}
+     * throws {@code IOException} ({@code CreateProcess error=2}). The executor wraps it as
+     * {@code UncheckedIOException}; the mutating verbs ({@code run_tests}/{@code build}/{@code install})
+     * catch it and fail CLOSED with this structured code rather than letting an unstructured exception
+     * escape the Envelope contract. This does NOT make {@code mvn}/{@code npx} runnable on Windows
+     * (that would breach the no-shell posture) — it makes the FAILURE clear; the hint points at a
+     * runtime where the launcher is directly spawnable (the JVM jar, or Linux/WSL2). Distinct from
+     * {@link #TOOL_NOT_INSTALLED} (the launcher is ABSENT from PATH): here it is present but
+     * non-spawnable.
+     */
+    MANAGER_NOT_SPAWNABLE
 }
