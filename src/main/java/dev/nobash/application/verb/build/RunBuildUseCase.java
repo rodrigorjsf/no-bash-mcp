@@ -116,7 +116,22 @@ public class RunBuildUseCase {
         int timeoutSeconds = BuildTimeoutPolicy.clamp(timeout);
         ExecSpec spec = argvBuilder.buildArgv(dir.toString(), timeoutSeconds);
 
-        ExecResult result = executor.execute(spec);
+        // A launcher that RESOLVED on PATH (TOOL_NOT_INSTALLED already passed) can still fail to
+        // SPAWN — on Windows mvn is a .cmd shim the no-shell launcher (ADR-0008) cannot execute
+        // directly, so pb.start() throws an IOException the executor wraps as UncheckedIOException.
+        // Fail CLOSED with a structured MANAGER_NOT_SPAWNABLE envelope rather than let an
+        // unstructured exception escape the Envelope contract (#71).
+        final ExecResult result;
+        try {
+            result = executor.execute(spec);
+        } catch (UncheckedIOException e) {
+            return Envelope.operationalError(VERB, ErrorCode.MANAGER_NOT_SPAWNABLE,
+                    "The '" + MANAGER + "' launcher resolved on PATH but could not be spawned "
+                            + "(on Windows the launcher is a .cmd/.bat shim the no-shell launcher "
+                            + "cannot execute directly).",
+                    "Run the server under the JVM jar, or on Linux/WSL2, where the launcher is "
+                            + "directly spawnable.");
+        }
 
         // Combine stdout + stderr — maven-compiler-plugin emits diagnostics on stdout.
         String combined = (result.stdout() == null ? "" : result.stdout())

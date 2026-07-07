@@ -116,11 +116,13 @@ native-image does **not** cross-compile, so each tuple is built on its own runne
 binary. Their launchers (`mvn.cmd`, `npx.cmd`) are `.cmd` shims, and the server spawns launchers
 directly with **no shell** (the trusted-launcher security posture, ADR-0008) — but Windows
 `CreateProcess` only ever executes `.exe`, never a `.cmd`, without a shell. `go` (a real `go.exe`)
-works. Maven/Node `run_tests` is therefore **unsupported on the native Windows binary**: the
-resolver finds `mvn.cmd`/`npx.cmd` on PATH, but the binary cannot spawn a `.cmd` without a shell, so
-the launch fails. On Windows, run the native binary under **WSL2** (a `linux-x64` / `linux-arm64`
-environment) for Maven/Node projects. Surfacing this launch failure as a *structured* operational
-error (rather than an unstructured exception) is tracked in #71.
+
+works. Maven/Node `run_tests` (and `build`/`install`) is therefore **unsupported on the native
+Windows binary**: the resolver finds `mvn.cmd`/`npx.cmd` on PATH, but the binary cannot spawn a
+`.cmd` without a shell, so the launch **fails closed with a structured `MANAGER_NOT_SPAWNABLE`
+operational error** — naming the launcher and pointing at the JVM-jar / WSL2 remedy, never an
+unstructured exception (#71). On Windows, use the JVM jar (`java -jar`) for Maven/Node projects, or
+run the native binary under **WSL2** (a `linux-x64` / `linux-arm64` environment).
 
 ### Unsupported tuples — fail-clear
 

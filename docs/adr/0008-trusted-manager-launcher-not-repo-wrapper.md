@@ -39,3 +39,8 @@ project-authored code"; security-model.md), not a new launcher-rewrite hole the 
   (`./gradlew`, npm/pnpm/yarn shims, etc.).
 - The "resolve the concrete executable, validate args strictly" rule from security-model.md (Windows shims,
   G13) is the trusted-resolution mechanism this ADR builds on.
+- **Structured consequence on native Windows (#71 / D60).** The no-shell posture means a resolved launcher
+  that is a `.cmd`/`.bat` shim (Windows `mvn.cmd`/`npx.cmd`) cannot be spawned directly — `CreateProcess`
+  runs only `.exe`. Rather than breach the posture by re-introducing a shell, `run_tests`/`build`/`install`
+  fail **closed** with a structured `MANAGER_NOT_SPAWNABLE` operational error naming the launcher and the
+  JVM-jar / WSL2 remedy, never an unstructured exception.
