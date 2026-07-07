@@ -1,10 +1,10 @@
 {
   "mcpServers": {
     "no-bash-mcp": {
-      "command": "java",
+      "command": "npx",
       "args": [
-        "-jar",
-        "/opt/no-bash-mcp/no-bash-mcp-0.1.0-SNAPSHOT.jar"
+        "-y",
+        "no-bash-mcp@0.0.0-sentinel"
       ]
     }
   }

@@ -20,12 +20,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Golden-file test for {@link HarnessConfigWriter} (AC2, AC4, AC6). It runs the writer against a
- * throwaway empty config dir with a FIXED sentinel jar path, then asserts the produced
+ * throwaway empty config dir with a FIXED sentinel self-version, then asserts the produced
  * {@code .mcp.json} and {@code .claude/settings.json} match committed golden fixtures.
  *
  * <p>Comparison is <b>semantic</b> (parse both sides to maps, compare trees) so it is immune to
- * whitespace/indent/key-order churn. The jar path is the fixed sentinel
- * {@code /opt/no-bash-mcp/no-bash-mcp-0.1.0-SNAPSHOT.jar}, so the golden is machine-stable.</p>
+ * whitespace/indent/key-order churn. The version is the fixed sentinel {@code 0.0.0-sentinel} — a
+ * deliberately-unresolvable value with NO live-npm coupling (ADR-0012 D-GATE), so the golden is
+ * machine-stable and never resolves the pin against the real registry.</p>
  *
  * <p>Two files, two golden assertions: {@code .mcp.json} carries ONLY {@code mcpServers};
  * {@code permissions.deny} lives in {@code .claude/settings.json}.</p>
@@ -33,8 +34,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayNameGeneration(DisplayNameGenerator.ReplaceUnderscores.class)
 class HarnessConfigWriterGoldenTest {
 
-    /** Fixed sentinel jar path — keeps the golden byte-stable across machines. */
-    static final String SENTINEL_JAR = "/opt/no-bash-mcp/no-bash-mcp-0.1.0-SNAPSHOT.jar";
+    /** Fixed sentinel self-version — keeps the golden byte-stable and free of live-npm coupling. */
+    static final String SENTINEL_VERSION = "0.0.0-sentinel";
 
     private static final String GOLDEN_MCP = "fixtures/bootstrap/golden-mcp.json";
     private static final String GOLDEN_SETTINGS = "fixtures/bootstrap/golden-settings.json";
@@ -58,7 +59,7 @@ class HarnessConfigWriterGoldenTest {
     @Test
     void the_produced_mcp_json_matches_the_golden_and_registers_only_no_bash_mcp(@TempDir Path dir)
             throws IOException {
-        HarnessConfigResult result = new HarnessConfigWriter(mapper).write(dir, SENTINEL_JAR);
+        HarnessConfigResult result = new HarnessConfigWriter(mapper).write(dir, SENTINEL_VERSION);
 
         Map<String, Object> produced = parse(Files.readString(result.mcpConfigPath()));
         Map<String, Object> golden = parse(readResource(GOLDEN_MCP));
@@ -71,7 +72,7 @@ class HarnessConfigWriterGoldenTest {
     @Test
     void the_produced_settings_json_matches_the_golden_permissions_deny(@TempDir Path dir)
             throws IOException {
-        HarnessConfigResult result = new HarnessConfigWriter(mapper).write(dir, SENTINEL_JAR);
+        HarnessConfigResult result = new HarnessConfigWriter(mapper).write(dir, SENTINEL_VERSION);
 
         Map<String, Object> produced = parse(Files.readString(result.settingsPath()));
         Map<String, Object> golden = parse(readResource(GOLDEN_SETTINGS));
@@ -84,7 +85,7 @@ class HarnessConfigWriterGoldenTest {
     @Test
     void the_writer_places_the_two_files_at_the_documented_paths(@TempDir Path dir)
             throws IOException {
-        HarnessConfigResult result = new HarnessConfigWriter(mapper).write(dir, SENTINEL_JAR);
+        HarnessConfigResult result = new HarnessConfigWriter(mapper).write(dir, SENTINEL_VERSION);
 
         assertThat(result.mcpConfigPath()).isEqualTo(dir.resolve(".mcp.json"));
         assertThat(result.settingsPath()).isEqualTo(dir.resolve(".claude").resolve("settings.json"));
@@ -95,7 +96,7 @@ class HarnessConfigWriterGoldenTest {
     @Test
     void the_result_surfaces_an_assertable_remove_bash_suggestion(@TempDir Path dir)
             throws IOException {
-        HarnessConfigResult result = new HarnessConfigWriter(mapper).write(dir, SENTINEL_JAR);
+        HarnessConfigResult result = new HarnessConfigWriter(mapper).write(dir, SENTINEL_VERSION);
 
         // AC5 — the remove-Bash suggestion is a returned value an acceptance test can assert.
         assertThat(result.removeBashSuggestion())

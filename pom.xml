@@ -4,7 +4,12 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>dev.nobash</groupId>
   <artifactId>no-bash-mcp</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <!-- Single source of truth for the release version (ADR-0012 D-COHERENCE). Defaults to the
+       in-dev 0.1.0-SNAPSHOT; the CI native build overrides via `-Drevision=$VERSION` — the SAME
+       $VERSION (from the `v*` tag) that feeds `npm version`/`npm publish`, so the binary's
+       build-stamped self-version equals the version published to npm, by construction. No
+       flatten-maven-plugin: nothing consumes this pom (distribution is npm-only). -->
+  <version>${revision}</version>
   <!-- Property-driven so `-Dpackaging=native-image` flips the lifecycle to a GraalVM native
        image without editing the pom (PRD-4 S1 / #59). Defaults to `jar` (the property below);
        the JVM build, tests, and the existing Inspector ITs are unaffected. -->
@@ -17,6 +22,10 @@
   </parent>
 
   <properties>
+    <!-- ${revision} = the project version (ADR-0012 D-COHERENCE). Overridden at release time by
+         `-Drevision=$VERSION`; the default is the in-dev SNAPSHOT. Keeps the packaged jar name
+         (no-bash-mcp-0.1.0-SNAPSHOT.jar) unchanged for the Inspector ITs on a default build. -->
+    <revision>0.1.0-SNAPSHOT</revision>
     <!-- Default packaging. `-Dpackaging=native-image` overrides it to trigger the GraalVM
          native build via micronaut-maven-plugin (which delegates to native-build-tools). -->
     <packaging>jar</packaging>
@@ -134,7 +143,41 @@
   </dependencies>
 
   <build>
+    <resources>
+      <!-- Filter ONLY application.yml so Maven resolves @project.version@ → project.version at build
+           time (ADR-0012 D-CARRIER). Declaring <resources> REPLACES the default set, so the second
+           entry re-adds every OTHER resource UNFILTERED — critical for the binary
+           META-INF/native-image reachability metadata (the sole hand-covered reflection surface) and
+           logback.xml, which must be copied byte-verbatim. -->
+      <resource>
+        <directory>src/main/resources</directory>
+        <filtering>true</filtering>
+        <includes>
+          <include>application.yml</include>
+        </includes>
+      </resource>
+      <resource>
+        <directory>src/main/resources</directory>
+        <filtering>false</filtering>
+        <excludes>
+          <exclude>application.yml</exclude>
+        </excludes>
+      </resource>
+    </resources>
     <plugins>
+      <plugin>
+        <!-- Resolve @project.version@ in the filtered application.yml (ADR-0012 D-CARRIER). The @…@
+             delimiter with useDefaultDelimiters=false is MANDATORY: it dodges the Maven↔Micronaut
+             ${…} placeholder collision, leaving Micronaut's runtime ${…} env-substitution intact. -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-resources-plugin</artifactId>
+        <configuration>
+          <useDefaultDelimiters>false</useDefaultDelimiters>
+          <delimiters>
+            <delimiter>@</delimiter>
+          </delimiters>
+        </configuration>
+      </plugin>
       <plugin>
         <!-- The micronaut-maven-plugin (extensions inherited from micronaut-parent 5.0.2) is the
              enabler for `-Dpackaging=native-image`: it registers the native-image packaging type
