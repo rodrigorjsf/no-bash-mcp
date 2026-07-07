@@ -47,6 +47,14 @@ import static org.junit.jupiter.api.Assertions.fail;
  * <p>A fifth test asserts the §7 stdout-hygiene contract holds NATIVELY: every stdout line stays
  * JSON-RPC while {@code ProcessBuilder} forks a subprocess.</p>
  *
+ * <p>Two further legs (PRD-6 P0, #98) prove the native binary binds the nested {@code forge.instances[]}
+ * list POJO from an external {@code MICRONAUT_CONFIG_FILES} yml — the reflective nested-list-config
+ * failure class that bit logback in native (D53/G15) — and its fail-closed empty default. They need no
+ * subprocess-manager (only the binary itself), so they run on EVERY tuple including Windows (no
+ * {@code assumeFalse} skip), asserting the {@code ForgeConfigStartupListener}'s positive stderr
+ * diagnostic. The local {@code mvn clean test} gate is structurally blind to these (Failsafe, not
+ * Surefire, and no native binary present) — the CI native gate is their only real proof (#57).</p>
+ *
  * <h3>Fail-closed (the anti-false-green spine, G5/D28)</h3>
  * <p>Unlike the JVM Inspector ITs (which {@code assumeTrue}-self-skip on any absent prerequisite),
  * this IT is the native <b>release gate</b>: under the {@code native} Maven profile it runs with
@@ -215,6 +223,54 @@ class NativeAcceptanceIT {
                 .isEmpty();
     }
 
+    // ---- Legs 6/7: forge external-config binding (PRD-6 P0, #98) — ALL tuples, NO Windows skip ----
+    // These legs need NO subprocess-manager (no mvn/go/npx) — they only spawn the native binary itself
+    // with MICRONAUT_CONFIG_FILES set — so, unlike the mvn/npx legs above, they run on EVERY tuple
+    // including Windows (no assumeFalse skip). They prove the load-bearing native unknown: that the
+    // GraalVM binary binds the nested forge.instances[] list POJO from an external yml through the same
+    // reflective introspection that bit logback in native (D53/G15). Observability is the crux — with
+    // no forge verb in scope, the ForgeConfigStartupListener's ONE stderr diagnostic line is the only
+    // positive signal that binding populated (or, fail-closed, did not populate) the list.
+
+    @Test
+    void native_binary_binds_forge_instances_from_an_external_micronaut_config_file() throws Exception {
+        // One instance, all three fields. kebab-case keys via Micronaut relaxed binding.
+        Path configYml = writeForgeConfig("""
+                forge:
+                  instances:
+                    - base-url: https://api.github.com
+                      api-prefix: /api/v3
+                      token-env: GITHUB_TOKEN
+                """);
+
+        List<String> stderr = driveInitializeWithConfig(configYml);
+        String joined = String.join("\n", stderr);
+
+        assertThat(joined)
+                .as("the native binary must bind the nested forge.instances[] list from the external "
+                        + "MICRONAUT_CONFIG_FILES yml and emit the positive startup diagnostic on stderr "
+                        + "(count + host + tokenEnv NAME).\n--- stderr ---\n%s", joined)
+                .contains("forge-config: bound 1 instance")
+                .contains("api.github.com")
+                .contains("GITHUB_TOKEN");
+        // Security: only the env-var NAME is ever emitted — never a resolved token value. The test never
+        // even sets GITHUB_TOKEN, so a leaked value would be structurally impossible to fake here.
+    }
+
+    @Test
+    void native_binary_is_fail_closed_when_no_forge_config_file_is_supplied() throws Exception {
+        // No MICRONAUT_CONFIG_FILES → the binary boots on its embedded application.yml (no forge section).
+        List<String> stderr = driveInitializeWithConfig(null);
+        String joined = String.join("\n", stderr);
+
+        assertThat(joined)
+                .as("with no external forge config the native binary must bind ZERO instances (fail-closed, "
+                        + "no forge access) — proven by the POSITIVE 'bound 0 instance' diagnostic, never by "
+                        + "mere silence (which cannot distinguish a bind failure from a startup crash).\n"
+                        + "--- stderr ---\n%s", joined)
+                .contains("forge-config: bound 0 instance");
+    }
+
     // ========================================================================================
     // Driving the native binary over STDIO (a Java port of #58's p0_run_tests_smoke.py).
     // ========================================================================================
@@ -264,6 +320,65 @@ class NativeAcceptanceIT {
         List<String> snapshot = new ArrayList<>(stdoutLines);
         String envelope = extractEnvelope(snapshot, stderrLines);
         return new NativeRun(envelope, snapshot);
+    }
+
+    /**
+     * Spawn the native binary with {@code MICRONAUT_CONFIG_FILES} pointed at {@code configFileOrNull}
+     * (or explicitly UNSET when null, for the deterministic fail-closed case), drive a single
+     * {@code initialize} handshake, then return every stderr line — where the
+     * {@code ForgeConfigStartupListener} diagnostic lands. The forge diagnostic is emitted at
+     * {@code StartupEvent} (before the STDIO loop reads {@code initialize}), so awaiting the
+     * {@code id=1} response guarantees the line is already on stderr; the stderr pump is joined after
+     * exit to drain it fully.
+     *
+     * <p>Fails LOUD, never silent: a binary that crashes or hangs while binding the nested list never
+     * answers {@code initialize}, so a missing {@code id=1} response within the deadline is a HARD
+     * {@link AssertionError} that dumps stderr — that startup crash is precisely the #98 failure class.</p>
+     */
+    private static List<String> driveInitializeWithConfig(Path configFileOrNull) throws Exception {
+        List<String> stdoutLines = Collections.synchronizedList(new ArrayList<>());
+        List<String> stderrLines = Collections.synchronizedList(new ArrayList<>());
+
+        ProcessBuilder pb = new ProcessBuilder(native_binary.toString());
+        if (configFileOrNull != null) {
+            pb.environment().put("MICRONAUT_CONFIG_FILES", configFileOrNull.toString());
+        } else {
+            // Fail-closed determinism: never inherit a stray MICRONAUT_CONFIG_FILES from the CI runner.
+            pb.environment().remove("MICRONAUT_CONFIG_FILES");
+        }
+        Process proc = pb.start();
+        Thread outPump = drain(proc.getInputStream(), stdoutLines);
+        Thread errPump = drain(proc.getErrorStream(), stderrLines);
+
+        try (BufferedWriter stdin = new BufferedWriter(
+                new OutputStreamWriter(proc.getOutputStream(), StandardCharsets.UTF_8))) {
+            send(stdin, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{"
+                    + "\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},"
+                    + "\"clientInfo\":{\"name\":\"native-forge-config-it\",\"version\":\"0\"}}}");
+            boolean got = awaitResponseId(stdoutLines, 1, 30);
+            if (!got) {
+                proc.destroyForcibly();
+                throw new AssertionError("native binary produced no initialize (id=1) response within 30s "
+                        + "— a startup crash or a hung nested forge.instances[] bind is the prime suspect (#98)\n"
+                        + "--- stderr ---\n" + String.join("\n", stderrLines)
+                        + "\n--- stdout ---\n" + String.join("\n", stdoutLines));
+            }
+        }
+
+        if (!proc.waitFor(15, TimeUnit.SECONDS)) {
+            proc.destroy();
+            if (!proc.waitFor(5, TimeUnit.SECONDS)) proc.destroyForcibly();
+        }
+        outPump.join(2000);
+        errPump.join(2000);
+        return new ArrayList<>(stderrLines);
+    }
+
+    /** Write an external Micronaut config yml (the {@code MICRONAUT_CONFIG_FILES} target) to a temp file. */
+    private static Path writeForgeConfig(String yamlBody) throws IOException {
+        Path config = Files.createTempFile("native-forge-config", ".yml");
+        Files.writeString(config, yamlBody, StandardCharsets.UTF_8);
+        return config;
     }
 
     private static Thread drain(InputStream stream, List<String> sink) {
