@@ -37,7 +37,11 @@ Traps surfaced during design, and why they are traps.
   cannot execute them directly; you must resolve the concrete `npm.cmd`/`mvn.cmd` path. Beware the
   `.cmd`/`.bat` **argument-quoting** vulnerability class (BatBadBut, CVE-2024-1874 et al.) — apply
   strict arg validation for shim targets. This refines pillar P2: the invariant is *no
-  agent-controlled shell string*, not *never spawn an OS process facility*.
+  agent-controlled shell string*, not *never spawn an OS process facility*. **On the *native*
+  binary** the no-shell launcher (ADR-0008) cannot spawn even a *resolved* `.cmd` — `CreateProcess`
+  runs only `.exe` — so `run_tests`/`build`/`install` **fail-clear with a structured
+  `MANAGER_NOT_SPAWNABLE` operational error** (#71 / D60), never an unstructured exception, rather
+  than re-introduce a shell to run the shim.
 - **G14 — Composition-safe ≠ consequence-safe.** The formal guarantee (no *novel* command) governs
   composition; the project goal governs *consequence* (no autonomous damage). `run_task` is
   composition-safe (the body is project-authored) but **not** consequence-safe — `deploy:prod`,

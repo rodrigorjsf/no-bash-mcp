@@ -8,4 +8,9 @@ micronaut:
       transport: STDIO
       info:
         name: no-bash-mcp
-        version: 0.1.0
+        # Build-stamped self-version (ADR-0012 D-CARRIER). Maven resource-filtering resolves
+        # @project.version@ to project.version (= ${revision}) at build time; single-quoted so
+        # snakeyaml reads the literal token (leading @ is a YAML-reserved indicator). This one key
+        # feeds serverInfo.version, the Bootstrap writer's exact npx pin, and the native-acceptance
+        # coherence assertion. Requires useDefaultDelimiters=false + the @…@ delimiter in the pom.
+        version: '@project.version@'

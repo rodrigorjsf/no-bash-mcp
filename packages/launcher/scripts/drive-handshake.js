@@ -1,9 +1,14 @@
 'use strict';
 
-// CI launcher-handshake acceptance driver (PRD-5 S3). Spawns the installed Launcher, completes the
+// CI launcher-handshake acceptance driver (PRD-5 S3/S4). Spawns the installed Launcher, completes the
 // MCP `initialize` + `tools/list` handshake over STDIO, asserts the real tool catalog, then closes
 // stdin so the launcher-spawned native binary exits cleanly (EOF). Cross-platform and bounded by a
 // hard timeout.
+//
+// When EXPECT_SERVER_VERSION is set (ADR-0012 D-GATE), it also asserts the `initialize` response's
+// serverInfo.version equals that value — the build-stamped self-version coherence check the JVM gate
+// is structurally blind to. On a PR (no tag) native-acceptance passes REVISION=0.1.0-SNAPSHOT
+// (plumbing coherence); on the release tag it passes $VERSION (resolvability coherence).
 //
 // This is the NativeAcceptanceIT direct-STDIO-drive technique applied to the Launcher. It is the
 // per-tuple acceptance gate across all four tuples (AC#3 of #75/#77): it has no opaque MCP Inspector
@@ -24,6 +29,22 @@ if (!launcherEntry) {
 
 const TIMEOUT_MS = 120000;
 const REQUIRED_TOOLS = ['run_tests', 'git_status'];
+const EXPECT_SERVER_VERSION = process.env.EXPECT_SERVER_VERSION; // ADR-0012 D-GATE (optional)
+
+// Parse the newline-delimited JSON responses for the `initialize` (id:1) reply and return its
+// serverInfo.version. Safe to call once id:2 is seen (id:1 is fully buffered by then).
+function extractServerVersion(raw) {
+  for (const line of raw.split('\n')) {
+    const s = line.trim();
+    if (!s) continue;
+    let msg;
+    try { msg = JSON.parse(s); } catch (_e) { continue; }
+    if (msg && msg.id === 1 && msg.result && msg.result.serverInfo) {
+      return msg.result.serverInfo.version;
+    }
+  }
+  return undefined;
+}
 
 const proc = spawn(process.execPath, [launcherEntry], { stdio: ['pipe', 'pipe', 'pipe'] });
 let out = '';
@@ -64,6 +85,16 @@ const poll = setInterval(() => {
   }
   for (const t of REQUIRED_TOOLS) {
     if (!out.includes(`"${t}"`)) { console.error(`tools/list did not list ${t}`); ok = false; }
+  }
+  if (EXPECT_SERVER_VERSION) {
+    const actual = extractServerVersion(out);
+    if (actual !== EXPECT_SERVER_VERSION) {
+      console.error(`serverInfo.version mismatch: expected "${EXPECT_SERVER_VERSION}", got "${actual}" `
+        + '(build-stamped self-version incoherent — ADR-0012 D-GATE)');
+      ok = false;
+    } else {
+      console.log(`serverInfo.version OK: build-stamped self-version == "${actual}"`);
+    }
   }
   if (!ok) fail('handshake payload assertions failed');
 

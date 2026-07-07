@@ -192,6 +192,20 @@ concept that merely shares the English word. (The Launcher is itself a Node proc
 resident in front of the native binary for the whole session — the footprint trade in ADR-0010.)
 _Avoid_: shim (the impl/code term for the same package), wrapper, loader, trampoline, bootstrap (the Bootstrap skill is a separate concept).
 
+**Self-version**:
+The release version a running server instance reports as its own — the identity the **Bootstrap
+skill** pins in `.mcp.json` and the value a client reads back from the server. One value per binary,
+**coherent** with the published **Launcher** and **Platform package** of the same release. A
+non-release build's self-version corresponds to no published release.
+_Avoid_: build number, git SHA, `@latest`, application version (unqualified).
+
+**Version coherence**:
+The property that a binary's **self-version** and the published **Launcher**/**Platform package**
+version of the same release are the *same* value — so an exact pin the **Bootstrap skill** writes
+resolves. A property of a release, not a step performed on one.
+_Avoid_: version sync, alignment, matching (each implies a reconciliation step; coherence is
+by-construction).
+
 ### Forge inspection
 
 **Forge**:
@@ -207,7 +221,7 @@ an arbitrary request and break the forge guarantee.
 _Avoid_: api, passthrough, escape hatch (deliberately absent).
 
 **Forge adapter**:
-The per-forge unit that maps a forge verb to authenticated REST/GraphQL calls and normalizes the
+The per-forge unit that maps a forge verb to authenticated HTTP calls and normalizes the
 result into the common envelope. Built on configurable seams — base URL, auth, TLS trust, proxy,
 tier/version — so SaaS and self-hosted (GHES, GitLab Self-Managed) share one abstraction. Distinct
 from an ecosystem adapter (local subprocess) and a harness adapter (permission config).
@@ -216,7 +230,8 @@ _Avoid_: connector, client, integration.
 **Forge guarantee**:
 The forge-side counterpart to the command-execution guarantee: the agent cannot compose an arbitrary
 HTTP request; it can only trigger fixed read-only forge verbs against a configured, allowlisted
-instance. Enforced at the token layer, not by hiding verbs.
+instance. On a tokened instance, read-only is enforced at the token layer; on a tokenless instance
+it holds by the absence of any credential — never by merely hiding verbs.
 _Avoid_: forge sandbox.
 
 **Read-scoped token**:

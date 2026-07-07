@@ -35,7 +35,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayNameGeneration(DisplayNameGenerator.ReplaceUnderscores.class)
 class HarnessConfigWriterMergeTest {
 
-    private static final String SENTINEL_JAR = "/opt/no-bash-mcp/no-bash-mcp-0.1.0-SNAPSHOT.jar";
+    private static final String SENTINEL_VERSION = "0.0.0-sentinel";
 
     private static ApplicationContext context;
     private static ObjectMapper mapper;
@@ -70,7 +70,7 @@ class HarnessConfigWriterMergeTest {
                 """;
         Files.writeString(dir.resolve(".mcp.json"), existingMcp, StandardCharsets.UTF_8);
 
-        HarnessConfigResult result = new HarnessConfigWriter(mapper).write(dir, SENTINEL_JAR);
+        HarnessConfigResult result = new HarnessConfigWriter(mapper).write(dir, SENTINEL_VERSION);
 
         Map<String, Object> mcp = parse(Files.readString(result.mcpConfigPath()));
         Map<String, Object> servers = (Map<String, Object>) mcp.get("mcpServers");
@@ -81,11 +81,11 @@ class HarnessConfigWriterMergeTest {
         assertThat(foreign.get("command")).isEqualTo("node");
         assertThat(foreign.get("args")).isEqualTo(List.of("other.js"));
 
-        // no-bash-mcp is added beside it with the java -jar launcher.
+        // no-bash-mcp is added beside it with the npx exact-pin launcher.
         assertThat(servers).containsKey("no-bash-mcp");
         Map<String, Object> ours = (Map<String, Object>) servers.get("no-bash-mcp");
-        assertThat(ours.get("command")).isEqualTo("java");
-        assertThat(ours.get("args")).isEqualTo(List.of("-jar", SENTINEL_JAR));
+        assertThat(ours.get("command")).isEqualTo("npx");
+        assertThat(ours.get("args")).isEqualTo(List.of("-y", "no-bash-mcp@" + SENTINEL_VERSION));
     }
 
     @Test
@@ -107,7 +107,7 @@ class HarnessConfigWriterMergeTest {
                 """;
         Files.writeString(claudeDir.resolve("settings.json"), existingSettings, StandardCharsets.UTF_8);
 
-        HarnessConfigResult result = new HarnessConfigWriter(mapper).write(dir, SENTINEL_JAR);
+        HarnessConfigResult result = new HarnessConfigWriter(mapper).write(dir, SENTINEL_VERSION);
 
         Map<String, Object> settings = parse(Files.readString(result.settingsPath()));
 
@@ -133,8 +133,8 @@ class HarnessConfigWriterMergeTest {
             @TempDir Path dir) throws IOException {
         HarnessConfigWriter writer = new HarnessConfigWriter(mapper);
 
-        writer.write(dir, SENTINEL_JAR);
-        HarnessConfigResult second = writer.write(dir, SENTINEL_JAR);
+        writer.write(dir, SENTINEL_VERSION);
+        HarnessConfigResult second = writer.write(dir, SENTINEL_VERSION);
 
         Map<String, Object> settings = parse(Files.readString(second.settingsPath()));
         Map<String, Object> permissions = (Map<String, Object>) settings.get("permissions");

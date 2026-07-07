@@ -34,6 +34,23 @@ class SmokeTest {
     @Inject
     CommandExecutorPort commandExecutorPort;
 
+    /** The build-stamped self-version bound from the filtered {@code application.yml} (ADR-0012). */
+    @Property(name = "micronaut.mcp.server.info.version")
+    String selfVersion;
+
+    @Test
+    void the_server_self_version_is_build_stamped_not_the_raw_placeholder() {
+        // ADR-0012 D-CARRIER: Maven resource-filtering must resolve @project.version@ in
+        // application.yml at build time. A raw '@' (or blank) means the @…@ delimiter /
+        // useDefaultDelimiters=false filtering config regressed — the carrier for serverInfo.version,
+        // the npx pin, and the native-acceptance coherence assertion. This guard fails locally in
+        // seconds instead of only on the ~30-min native gate.
+        assertThat(selfVersion)
+                .isNotBlank()
+                .doesNotContain("@")
+                .matches("\\d+\\.\\d+\\.\\d+.*");
+    }
+
     @Test
     void the_tool_bean_graph_wires_via_compile_time_di() {
         assertThat(buildTools).isNotNull();

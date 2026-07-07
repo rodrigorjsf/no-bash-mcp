@@ -49,8 +49,14 @@ jobs:
   version-policy:
     name: enforce pre-1.0 versioning policy (D58)
     runs-on: ubuntu-latest
+    # Expose the resolved version so `build` can stamp it into the native binary's self-version via
+    # -Drevision (ADR-0012 D-COHERENCE): the SAME $VERSION that drives npm publish also builds the
+    # binary, so serverInfo.version == the published npm version by construction.
+    outputs:
+      version: ${{ steps.policy.outputs.version }}
     steps:
       - name: Reject major >= 1 until the stability rule is lifted
+        id: policy
         run: |
           set -euo pipefail
           REF="${GITHUB_REF:-}"
@@ -64,6 +70,7 @@ jobs:
             echo "::error::Versioning policy (D58 / CLAUDE.md \"Versioning policy\"): the MAJOR version must stay 0 until a minimally stable first delivery AND maintainer approval. Refusing to release v$VERSION. Use 0.x (optionally -alpha/-beta/-rc), or lift the rule first."
             exit 1
           fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "version policy OK: v$VERSION (major 0)"
 
   # ── Release gate: build + acceptance-test all four tuples (reused matrix) ──
@@ -71,6 +78,11 @@ jobs:
     name: build + acceptance gate (4-tuple matrix)
     needs: version-policy
     uses: ./.github/workflows/native-acceptance.yml
+    with:
+      # Stamp the tag's $VERSION into the binary's build-stamped self-version (ADR-0012 D-COHERENCE):
+      # the same value that feeds npm publish, so serverInfo.version == the published npm version and
+      # the release-tag handshake asserts full resolvability coherence (not just plumbing).
+      revision: ${{ needs.version-policy.outputs.version }}
     secrets: inherit   # forward GITHUB_TOKEN so the reused workflow's setup-graalvm authenticates
 
   # ── Publish the verified binaries as a GitHub Release (real tag pushes only) ──
