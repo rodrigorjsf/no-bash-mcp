@@ -16,7 +16,7 @@ packages/**/*.tgz
 
 # OS
 .DS_Store
-.orchestrate/runs/
+.orchestrate/
 /.project
 /.classpath
 /.factorypath

@@ -1,4 +1,0 @@
-{
-  "tests": ["mvn", "-B", "clean", "test"],
-  "build": ["mvn", "-B", "-DskipTests", "package"]
-}
