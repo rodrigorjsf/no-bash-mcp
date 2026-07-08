@@ -1,8 +1,15 @@
 package dev.nobash.application.verb.getlog;
 
+import dev.nobash.application.forge.ForgeLogHandleRegistry;
 import dev.nobash.application.runcache.RawOutputStash;
 import dev.nobash.application.runcache.RunRecord;
 import dev.nobash.domain.envelope.Handle;
+import dev.nobash.domain.forge.ForgeAccessException;
+import dev.nobash.domain.port.out.ForgeCheckRequest;
+import dev.nobash.domain.port.out.ForgeCheckRun;
+import dev.nobash.domain.port.out.ForgeLogRequest;
+import dev.nobash.domain.port.out.ForgePort;
+import dev.nobash.domain.error.ErrorCode;
 import dev.nobash.domain.result.ContainerFinding;
 import dev.nobash.domain.result.ContainerScope;
 import dev.nobash.domain.result.Outcome;
@@ -38,10 +45,29 @@ class GetLogUseCaseTest {
     private GetLogEntry stash(RunRecord record) {
         RawOutputStash cache = new RawOutputStash();
         Handle handle = cache.put(record);
-        return new GetLogEntry(new GetLogUseCase(cache), handle.id());
+        return new GetLogEntry(newUseCase(cache), handle.id());
     }
 
     private record GetLogEntry(GetLogUseCase useCase, String handleId) {}
+
+    /** A use-case over the given stash with an empty forge registry and a forge port that explodes
+     *  if consulted — the stash-path tests must never touch the forge. */
+    private static GetLogUseCase newUseCase(RawOutputStash cache) {
+        return new GetLogUseCase(cache, new ForgeLogHandleRegistry(), new ExplodingForgePort());
+    }
+
+    /** A forge port that fails the test if consulted (stash-path isolation). */
+    private static final class ExplodingForgePort implements ForgePort {
+        @Override
+        public List<ForgeCheckRun> fetchChecks(ForgeCheckRequest request) {
+            throw new AssertionError("forge port must not be consulted on the stash path");
+        }
+
+        @Override
+        public String fetchJobLog(ForgeLogRequest request) {
+            throw new AssertionError("forge port must not be consulted on the stash path");
+        }
+    }
 
     // ── No-filter path: return the full raw output ────────────────────────────
 
@@ -65,7 +91,7 @@ class GetLogUseCaseTest {
         @Test
         void returns_null_for_unknown_handle_with_no_filter() {
             RawOutputStash cache = new RawOutputStash();
-            GetLogUseCase useCase = new GetLogUseCase(cache);
+            GetLogUseCase useCase = newUseCase(cache);
 
             assertThat(useCase.get("does-not-exist", null)).isNull();
         }
@@ -73,7 +99,7 @@ class GetLogUseCaseTest {
         @Test
         void returns_null_for_null_handle_id_with_no_filter() {
             RawOutputStash cache = new RawOutputStash();
-            GetLogUseCase useCase = new GetLogUseCase(cache);
+            GetLogUseCase useCase = newUseCase(cache);
 
             assertThat(useCase.get(null, null)).isNull();
         }
@@ -116,7 +142,7 @@ class GetLogUseCaseTest {
         @Test
         void returns_null_for_unknown_handle_with_filter() {
             RawOutputStash cache = new RawOutputStash();
-            GetLogUseCase useCase = new GetLogUseCase(cache);
+            GetLogUseCase useCase = newUseCase(cache);
 
             assertThat(useCase.get("does-not-exist", "shouldFail")).isNull();
         }
@@ -141,7 +167,7 @@ class GetLogUseCaseTest {
         @Test
         void evicted_handle_returns_null_for_no_filter() {
             RawOutputStash cache = new RawOutputStash();
-            GetLogUseCase useCase = new GetLogUseCase(cache);
+            GetLogUseCase useCase = newUseCase(cache);
 
             // Fill to MAX_RUNS, capturing the first handle.
             Handle first = null;
@@ -160,7 +186,7 @@ class GetLogUseCaseTest {
         @Test
         void evicted_handle_returns_null_for_filter() {
             RawOutputStash cache = new RawOutputStash();
-            GetLogUseCase useCase = new GetLogUseCase(cache);
+            GetLogUseCase useCase = newUseCase(cache);
 
             Handle first = null;
             for (int i = 0; i < RawOutputStash.MAX_RUNS; i++) {
@@ -172,6 +198,70 @@ class GetLogUseCaseTest {
             assertThat(useCase.get(first.id(), "shouldFail"))
                     .as("evicted handle returns null even with a filter")
                     .isNull();
+        }
+    }
+
+    // ── Forge check handle: lazy job-log fetch via the 302 flow (PRD-6 S1, #99) ──
+
+    @Nested
+    class forge_check_handle {
+
+        private static ForgePort logPortReturning(String log, long expectedJobId) {
+            return new ForgePort() {
+                @Override
+                public List<ForgeCheckRun> fetchChecks(ForgeCheckRequest request) {
+                    throw new AssertionError("fetchChecks must not be called by get_log");
+                }
+
+                @Override
+                public String fetchJobLog(ForgeLogRequest request) {
+                    assertThat(request.jobId()).isEqualTo(expectedJobId);
+                    return log;
+                }
+            };
+        }
+
+        @Test
+        void a_handle_not_in_the_stash_fetches_the_forge_job_log() {
+            RawOutputStash cache = new RawOutputStash();
+            ForgeLogHandleRegistry registry = new ForgeLogHandleRegistry();
+            String handleId = registry.register(
+                    new ForgeLogRequest("https://api.github.com", null, null, "octo", "hello", 42L));
+            GetLogUseCase useCase =
+                    new GetLogUseCase(cache, registry, logPortReturning("FORGE JOB LOG", 42L));
+
+            assertThat(useCase.get(handleId, null)).isEqualTo("FORGE JOB LOG");
+        }
+
+        @Test
+        void a_forge_fetch_failure_returns_a_diagnostic_string_not_a_lie() {
+            RawOutputStash cache = new RawOutputStash();
+            ForgeLogHandleRegistry registry = new ForgeLogHandleRegistry();
+            String handleId = registry.register(
+                    new ForgeLogRequest("https://api.github.com", null, null, "octo", "hello", 7L));
+            ForgePort forge = new ForgePort() {
+                @Override
+                public List<ForgeCheckRun> fetchChecks(ForgeCheckRequest request) {
+                    throw new AssertionError();
+                }
+
+                @Override
+                public String fetchJobLog(ForgeLogRequest request) {
+                    throw new ForgeAccessException(ErrorCode.FORGE_RATE_LIMITED,
+                            "rate limited", "wait", "60");
+                }
+            };
+            GetLogUseCase useCase = new GetLogUseCase(cache, registry, forge);
+
+            assertThat(useCase.get(handleId, null))
+                    .contains("could not fetch the forge job log");
+        }
+
+        @Test
+        void an_unknown_handle_absent_from_both_stash_and_registry_returns_null() {
+            GetLogUseCase useCase = newUseCase(new RawOutputStash());
+
+            assertThat(useCase.get("forge-log-does-not-exist", null)).isNull();
         }
     }
 }

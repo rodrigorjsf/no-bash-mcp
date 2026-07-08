@@ -2,6 +2,7 @@ package dev.nobash.domain.envelope;
 
 import dev.nobash.domain.error.ErrorCode;
 import dev.nobash.domain.error.OperationalError;
+import dev.nobash.domain.forge.PrCheck;
 import dev.nobash.domain.git.GitCommit;
 import dev.nobash.domain.git.GitCommitDetail;
 import dev.nobash.domain.git.GitBranchEntry;
@@ -81,7 +82,11 @@ import java.util.List;
  * @param untrusted       {@code true} when this envelope carries repo-derived content that has been
  *                        neutralized but is still untrusted data ({@code failures[]},
  *                        {@code diagnostics[]}, {@code gitStatus}, {@code gitLog},
- *                        {@code gitShow}, {@code gitDiff}, or {@code gitBranch})
+ *                        {@code gitShow}, {@code gitDiff}, {@code gitBranch}, or {@code prChecks})
+ * @param prChecks        the per-check CI list ({@code name}/{@code conclusion}/{@code handle});
+ *                        present only on a {@code pr_checks} result (PRD-6 S1, #99). Check names are
+ *                        repo-derived, so they are P9-neutralized and the envelope is marked
+ *                        {@code untrusted=true}
  */
 @Serdeable
 @Introspected
@@ -101,7 +106,8 @@ public record Envelope(boolean ok,
                        @Nullable InstallSummary installSummary,
                        @Nullable OperationalError error,
                        @Nullable Handle handle,
-                       boolean untrusted) {
+                       boolean untrusted,
+                       @Nullable List<PrCheck> prChecks) {
 
     /**
      * Build a counts-only success envelope ({@code ok=true}) for {@code run_tests}. Surfaces NO
@@ -109,7 +115,7 @@ public record Envelope(boolean ok,
      * CONTEXT.md "Noise"). Server-authored content only; marked {@code untrusted=false}.
      */
     public static Envelope success(String verb, String manager, Summary summary, @Nullable Handle handle) {
-        return new Envelope(true, verb, manager, summary, null, null, null, null, null, null, null, null, null, null, handle, false);
+        return new Envelope(true, verb, manager, summary, null, null, null, null, null, null, null, null, null, null, handle, false, null);
     }
 
     /**
@@ -119,7 +125,7 @@ public record Envelope(boolean ok,
      */
     public static Envelope buildSuccess(String verb, String manager, BuildSummary buildSummary,
                                         @Nullable Handle handle) {
-        return new Envelope(true, verb, manager, null, null, null, buildSummary, null, null, null, null, null, null, null, handle, false);
+        return new Envelope(true, verb, manager, null, null, null, buildSummary, null, null, null, null, null, null, null, handle, false, null);
     }
 
     /**
@@ -135,7 +141,7 @@ public record Envelope(boolean ok,
                 .map(Envelope::neutralizeDiagnostic)
                 .toList();
         return new Envelope(false, verb, manager, null, null, List.copyOf(neutralized),
-                buildSummary, null, null, null, null, null, null, null, handle, true);
+                buildSummary, null, null, null, null, null, null, null, handle, true, null);
     }
 
     /**
@@ -155,7 +161,7 @@ public record Envelope(boolean ok,
         List<Finding> neutralized = failures.stream()
                 .map(Envelope::neutralizeFinding)
                 .toList();
-        return new Envelope(false, verb, manager, summary, List.copyOf(neutralized), null, null, null, null, null, null, null, null, null, handle, true);
+        return new Envelope(false, verb, manager, summary, List.copyOf(neutralized), null, null, null, null, null, null, null, null, null, handle, true, null);
     }
 
     /**
@@ -171,7 +177,7 @@ public record Envelope(boolean ok,
      */
     public static Envelope gitStatus(String verb, GitStatus status, @Nullable Handle handle) {
         return new Envelope(true, verb, null, null, null, null, null,
-                neutralizeGitStatus(status), null, null, null, null, null, null, handle, true);
+                neutralizeGitStatus(status), null, null, null, null, null, null, handle, true, null);
     }
 
     /**
@@ -191,7 +197,7 @@ public record Envelope(boolean ok,
                 .map(Envelope::neutralizeGitCommit)
                 .toList();
         return new Envelope(true, verb, null, null, null, null, null, null,
-                List.copyOf(neutralized), null, null, null, null, null, null, true);
+                List.copyOf(neutralized), null, null, null, null, null, null, true, null);
     }
 
     /**
@@ -208,7 +214,7 @@ public record Envelope(boolean ok,
      */
     public static Envelope gitShow(String verb, GitCommitDetail detail, @Nullable Handle handle) {
         return new Envelope(true, verb, null, null, null, null, null, null, null,
-                neutralizeGitCommitDetail(detail), null, null, null, null, handle, true);
+                neutralizeGitCommitDetail(detail), null, null, null, null, handle, true, null);
     }
 
     /**
@@ -232,7 +238,7 @@ public record Envelope(boolean ok,
                 .map(Envelope::neutralizeGitDiffEntry)
                 .toList();
         return new Envelope(true, verb, null, null, null, null, null, null, null, null,
-                List.copyOf(neutralized), null, null, null, handle, true);
+                List.copyOf(neutralized), null, null, null, handle, true, null);
     }
 
     /**
@@ -256,7 +262,7 @@ public record Envelope(boolean ok,
                 .map(Envelope::neutralizeGitBranchEntry)
                 .toList();
         return new Envelope(true, verb, null, null, null, null, null, null, null, null, null,
-                List.copyOf(neutralized), null, null, null, true);
+                List.copyOf(neutralized), null, null, null, true, null);
     }
 
     /**
@@ -273,7 +279,7 @@ public record Envelope(boolean ok,
     public static Envelope installSuccess(String verb, String manager, InstallSummary installSummary,
                                           @Nullable Handle handle) {
         return new Envelope(true, verb, manager, null, null, null, null, null, null, null, null, null,
-                installSummary, null, handle, false);
+                installSummary, null, handle, false, null);
     }
 
     /**
@@ -291,10 +297,53 @@ public record Envelope(boolean ok,
      */
     public static Envelope operationalError(String verb, ErrorCode code, String message, String hint,
                                             @Nullable Handle handle) {
-        return new Envelope(false, verb, null, null, null, null, null, null, null, null, null, null, null, new OperationalError(code, message, hint), handle, false);
+        return new Envelope(false, verb, null, null, null, null, null, null, null, null, null, null, null, new OperationalError(code, message, hint), handle, false, null);
+    }
+
+    /**
+     * Build a {@code pr_checks} result envelope (PRD-6 S1, #99). Carries the per-check {@code prChecks[]}
+     * list ({@code name}/{@code conclusion}/{@code handle}) and, when not ok, the failing checks as
+     * top-level {@code failures[]} {@link ContainerFinding}s (scope {@code RUN}). {@code manager} is
+     * null (forge is ecosystem-agnostic).
+     *
+     * <p><b>Container-aware {@code ok}.</b> {@code ok} is computed by the use-case's classifier: one
+     * red check-run OR a red commit status OR an incomplete (queued/in_progress) check flips it false.
+     * The failure floor never fabricates a finding — {@code failures[]} is exactly the failing set the
+     * caller passes.</p>
+     *
+     * <p><b>P9 neutralization.</b> Check names ({@code prChecks[].name}) and every repo-derived field
+     * of each {@link Finding} are attacker-controllable, so both are passed through
+     * {@link OutboundNeutralizer} and the envelope is marked {@code untrusted=true}.</p>
+     *
+     * @param verb     the verb name ({@code "pr_checks"})
+     * @param ok       the container-aware verdict (all checks passing)
+     * @param checks   the per-check list (all checks; passing and failing)
+     * @param failures the failing checks as {@code ContainerFinding(RUN)}; empty when ok
+     * @return the pr_checks envelope
+     */
+    public static Envelope prChecks(String verb, boolean ok, List<PrCheck> checks,
+                                    List<Finding> failures) {
+        List<PrCheck> neutralizedChecks = checks.stream()
+                .map(Envelope::neutralizePrCheck)
+                .toList();
+        List<Finding> neutralizedFailures = failures.stream()
+                .map(Envelope::neutralizeFinding)
+                .toList();
+        return new Envelope(ok, verb, null, null, List.copyOf(neutralizedFailures), null, null, null,
+                null, null, null, null, null, null, null, true, List.copyOf(neutralizedChecks));
     }
 
     // ---- P9 neutralization helpers ----
+
+    /**
+     * Apply {@link OutboundNeutralizer} to the repo-derived {@code name} of a {@link PrCheck}
+     * ({@code CONTAINER_CAP}). The {@code conclusion} is a server-normalized value and the
+     * {@code handle} is a server-minted id — neither is neutralized.
+     */
+    private static PrCheck neutralizePrCheck(PrCheck check) {
+        String name = OutboundNeutralizer.neutralize(check.name(), OutboundNeutralizer.CONTAINER_CAP);
+        return new PrCheck(name, check.conclusion(), check.handle());
+    }
 
     /**
      * Apply {@link OutboundNeutralizer} to all repo-derived string fields of a {@link Finding}.

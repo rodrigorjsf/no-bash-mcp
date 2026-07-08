@@ -1,6 +1,7 @@
 package dev.nobash.adapter.out.forge;
 
 import dev.nobash.adapter.out.forge.ForgeConfiguration.Instance;
+import io.micronaut.context.env.Environment;
 import io.micronaut.context.event.ApplicationEventListener;
 import io.micronaut.context.event.StartupEvent;
 import jakarta.inject.Singleton;
@@ -40,14 +41,21 @@ public class ForgeConfigStartupListener implements ApplicationEventListener<Star
     private static final Logger LOG = LoggerFactory.getLogger(ForgeConfigStartupListener.class);
 
     private final ForgeConfiguration configuration;
+    private final Environment environment;
 
-    public ForgeConfigStartupListener(ForgeConfiguration configuration) {
+    public ForgeConfigStartupListener(ForgeConfiguration configuration, Environment environment) {
         this.configuration = configuration;
+        this.environment = environment;
     }
 
     @Override
     public void onApplicationEvent(StartupEvent event) {
         List<Instance> instances = configuration.getInstances();
+
+        // D69 / D62(3): TLS is mandatory in production. An http:// base URL is a test-profile-only
+        // affordance (WireMock stubs); outside the `test` environment it aborts startup, fail-closed,
+        // BEFORE the diagnostic line (a valid https config still logs below).
+        rejectInsecureBaseUrlsOutsideTestProfile(instances);
 
         String hosts = instances.stream()
                 .map(instance -> hostOf(instance.baseUrl()))
@@ -80,6 +88,25 @@ public class ForgeConfigStartupListener implements ApplicationEventListener<Star
             return host == null || host.isBlank() ? trimmed : host;
         } catch (RuntimeException e) {
             return trimmed;
+        }
+    }
+
+    /**
+     * Fail closed at startup if any instance baseUrl is {@code http://} while the {@code test}
+     * environment is NOT active (D69/D62(3): production forge access is TLS-always). The {@code test}
+     * profile keeps the {@code http://} affordance so WireMock stubs can serve plaintext.
+     */
+    private void rejectInsecureBaseUrlsOutsideTestProfile(List<Instance> instances) {
+        if (environment.getActiveNames().contains(Environment.TEST)) {
+            return;
+        }
+        for (Instance instance : instances) {
+            String baseUrl = instance.baseUrl();
+            if (baseUrl != null && baseUrl.strip().toLowerCase().startsWith("http://")) {
+                throw new IllegalStateException(
+                        "Insecure forge base URL rejected: '" + baseUrl + "'. Forge instances must use "
+                                + "https:// in production (http:// is a test-profile-only affordance).");
+            }
         }
     }
 }
