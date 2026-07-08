@@ -140,6 +140,24 @@
       <scope>test</scope>
     </dependency>
 
+    <!-- Forge HTTP stub for the pr_checks adapter tests (PRD-6 S1, #99). Pinned, unmanaged:
+         WireMock serves the GitHub REST shapes (paginated check-runs, Commit Statuses, the
+         302-to-signed-blob job-log flow) over a real local HTTP server so the production JDK
+         HttpClient exercises Link rel=next pagination and the cross-host Authorization strip
+         against a deterministic, offline endpoint. Test scope only.
+
+         The STANDALONE artifact is mandatory (not plain `wiremock`): StdioServerEndToEndTest spawns
+         the real server with the full test `java.class.path`, so WireMock's transitive Jackson/Jetty
+         would collide with micronaut-serde-jackson in that subprocess and corrupt the STDIO channel.
+         `wiremock-standalone` shades every transitive dependency (WireMock's own API classes stay
+         un-relocated), so the classpath stays conflict-free. -->
+    <dependency>
+      <groupId>org.wiremock</groupId>
+      <artifactId>wiremock-standalone</artifactId>
+      <version>3.13.2</version>
+      <scope>test</scope>
+    </dependency>
+
   </dependencies>
 
   <build>
