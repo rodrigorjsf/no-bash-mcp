@@ -24,8 +24,9 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * MCP Inspector {@code --cli} acceptance test for the {@code pr_checks} tool (PRD-6 S1, #99) — the
- * verb driven through the REAL packaged server process end-to-end.
+ * MCP Inspector {@code --cli} acceptance test for the {@code pr_checks}/{@code pr_view}/
+ * {@code pr_diff} tools (PRD-6 S1/S2, #99/#100) — every verb driven through the REAL packaged server
+ * process end-to-end.
  *
  * <p>This is a <b>Failsafe integration test</b> ({@code *IT.java}), bound to the
  * {@code integration-test}/{@code verify} phase. It is intentionally NOT a Surefire unit test and MUST
@@ -35,11 +36,17 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <h3>What is proved</h3>
  * <p>The server, configured with an external forge allowlist ({@code MICRONAUT_CONFIG_FILES}) pointing
- * at a local WireMock forge stub, resolves the {@code repo} override against the allowlist, fetches and
- * folds check-runs + a red Commit Status, and returns {@code ok=false} with a populated
- * {@code prChecks[]} — asserted via {@code jq} on the envelope read off the real process's stdout. The
- * server is spawned with {@code MICRONAUT_ENVIRONMENTS=test} so the {@code http://} stub URL is
- * accepted (the test-profile-only affordance, D69).</p>
+ * at a local WireMock forge stub, resolves the {@code repo} override against the allowlist. For
+ * {@code pr_checks}: fetches and folds check-runs + a red Commit Status, returning {@code ok=false}
+ * with a populated {@code prChecks[]}. For {@code pr_view}: fetches the PR resource + reviews + a
+ * checks fold, returning the one-call {@code prView} carrier. For {@code pr_diff}: fetches the unified
+ * diff and returns a non-blank {@code handle} (the full diff text is retrieved by {@code get_log} —
+ * NOT re-proven here, since each Inspector invocation is a fresh JVM with an empty in-memory stash;
+ * the byte-for-byte non-lossy round-trip is proven at the unit level in
+ * {@code PrDiffUseCaseTest#a_large_diff_routes_through_handle_and_get_log_non_lossily}). All three are
+ * asserted via {@code jq} on the envelope read off the real process's stdout. The server is spawned
+ * with {@code MICRONAUT_ENVIRONMENTS=test} so the {@code http://} stub URL is accepted (the
+ * test-profile-only affordance, D69).</p>
  */
 @DisplayNameGeneration(DisplayNameGenerator.ReplaceUnderscores.class)
 class ForgeInspectorAcceptanceIT {
@@ -51,6 +58,7 @@ class ForgeInspectorAcceptanceIT {
     private static final String OWNER = "octo";
     private static final String REPO = "hello";
     private static final String REF = "deadbeefcafe";
+    private static final long PR = 42L;
 
     private static Path packaged_jar;
     private static Path configFile;
@@ -95,6 +103,29 @@ class ForgeInspectorAcceptanceIT {
                                 + "{\"context\":\"ci/legacy\",\"state\":\"failure\","
                                 + "\"target_url\":\"https://x/build/9\"}]}")));
 
+        // pr_view (#100): the PR resource, its reviews, and the head-sha checks fold.
+        String pullPath = "/repos/" + OWNER + "/" + REPO + "/pulls/" + PR;
+        forge.stubFor(get(urlEqualTo(pullPath))
+                .withHeader("Accept", com.github.tomakehurst.wiremock.client.WireMock.equalTo(
+                        "application/vnd.github+json"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{\"state\":\"open\",\"mergeable\":true,\"merged\":false,"
+                                + "\"head\":{\"ref\":\"feature-x\",\"sha\":\"" + REF + "\"},"
+                                + "\"base\":{\"ref\":\"main\"}}")));
+        forge.stubFor(get(urlEqualTo(pullPath + "/reviews"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("[{\"state\":\"APPROVED\"}]")));
+
+        // pr_diff (#100): the same PR resource, requested with the diff Accept header.
+        forge.stubFor(get(urlEqualTo(pullPath))
+                .withHeader("Accept", com.github.tomakehurst.wiremock.client.WireMock.equalTo(
+                        "application/vnd.github.v3.diff"))
+                .willReturn(aResponse().withStatus(200)
+                        .withHeader("Content-Type", "application/vnd.github.v3.diff")
+                        .withBody("diff --git a/foo.txt b/foo.txt\n+hello\n")));
+
         // External forge allowlist pointing at the http:// stub (accepted only under the test profile).
         configFile = Files.createTempFile("forge-it-config", ".yml");
         Files.writeString(configFile, """
@@ -131,16 +162,48 @@ class ForgeInspectorAcceptanceIT {
                 .isGreaterThanOrEqualTo(1);
     }
 
+    @Test
+    void inspector_cli_pr_view_returns_the_one_call_metadata_envelope() throws Exception {
+        String envelopeJson = callForgeToolViaInspector("pr_view", List.of("pr=" + PR));
+
+        assertThat(jqExtract(envelopeJson, ".ok").strip()).isEqualTo("true");
+        assertThat(jqExtract(envelopeJson, ".prView.state").strip()).isEqualTo("open");
+        assertThat(jqExtract(envelopeJson, ".prView.reviewStatus").strip())
+                .as("the reviews fold must be present")
+                .isEqualTo("approved");
+        assertThat(jqExtract(envelopeJson, ".prView.checksSummary").strip())
+                .as("the checks summary must be present (folded from the head-sha check-runs/status)")
+                .isNotEqualTo("null");
+    }
+
+    @Test
+    void inspector_cli_pr_diff_returns_a_handle_to_the_full_diff() throws Exception {
+        String envelopeJson = callForgeToolViaInspector("pr_diff", List.of("pr=" + PR));
+
+        assertThat(jqExtract(envelopeJson, ".ok").strip()).isEqualTo("true");
+        String handle = jqExtract(envelopeJson, ".handle.id").strip();
+        assertThat(handle).as("pr_diff must carry a non-blank get_log handle")
+                .isNotBlank()
+                .isNotEqualTo("null");
+    }
+
     // ---- helpers ----
 
     private static String callPrChecksViaInspector() throws Exception {
+        return callForgeToolViaInspector("pr_checks", List.of("ref=" + REF));
+    }
+
+    private static String callForgeToolViaInspector(String toolName, List<String> extraArgs) throws Exception {
         List<String> cmd = new ArrayList<>(List.of(
                 "npx", "--yes", INSPECTOR_VERSION, "--cli",
                 "java", "-jar", packaged_jar.toString(),
                 "--method", "tools/call",
-                "--tool-name", "pr_checks",
-                "--tool-arg", "repo=" + OWNER + "/" + REPO,
-                "--tool-arg", "ref=" + REF));
+                "--tool-name", toolName,
+                "--tool-arg", "repo=" + OWNER + "/" + REPO));
+        for (String arg : extraArgs) {
+            cmd.add("--tool-arg");
+            cmd.add(arg);
+        }
 
         Path outFile = Files.createTempFile("forge-inspector-out", ".json");
         Path errFile = Files.createTempFile("forge-inspector-err", ".log");
@@ -165,7 +228,7 @@ class ForgeInspectorAcceptanceIT {
         String stderr = Files.readString(errFile, StandardCharsets.UTF_8);
         String envelopeJson = extractEnvelopeViaJq(outFile, stdout, stderr);
         assertThat(envelopeJson)
-                .as("Inspector output must contain a valid pr_checks envelope.\n"
+                .as("Inspector output must contain a valid " + toolName + " envelope.\n"
                         + "--- stdout ---\n%s\n--- stderr ---\n%s", stdout, stderr)
                 .isNotBlank();
         return envelopeJson;

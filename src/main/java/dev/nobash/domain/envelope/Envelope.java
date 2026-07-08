@@ -3,6 +3,8 @@ package dev.nobash.domain.envelope;
 import dev.nobash.domain.error.ErrorCode;
 import dev.nobash.domain.error.OperationalError;
 import dev.nobash.domain.forge.PrCheck;
+import dev.nobash.domain.forge.PrChecksSummary;
+import dev.nobash.domain.forge.PrView;
 import dev.nobash.domain.git.GitCommit;
 import dev.nobash.domain.git.GitCommitDetail;
 import dev.nobash.domain.git.GitBranchEntry;
@@ -87,6 +89,9 @@ import java.util.List;
  *                        present only on a {@code pr_checks} result (PRD-6 S1, #99). Check names are
  *                        repo-derived, so they are P9-neutralized and the envelope is marked
  *                        {@code untrusted=true}
+ * @param prView          the one-call PR metadata carrier; present only on a {@code pr_view} result
+ *                        (PRD-6 S2, #100). {@code headRef}/{@code baseRef} are repo-derived, so they
+ *                        are P9-neutralized and the envelope is marked {@code untrusted=true}
  */
 @Serdeable
 @Introspected
@@ -107,7 +112,8 @@ public record Envelope(boolean ok,
                        @Nullable OperationalError error,
                        @Nullable Handle handle,
                        boolean untrusted,
-                       @Nullable List<PrCheck> prChecks) {
+                       @Nullable List<PrCheck> prChecks,
+                       @Nullable PrView prView) {
 
     /**
      * Build a counts-only success envelope ({@code ok=true}) for {@code run_tests}. Surfaces NO
@@ -115,7 +121,7 @@ public record Envelope(boolean ok,
      * CONTEXT.md "Noise"). Server-authored content only; marked {@code untrusted=false}.
      */
     public static Envelope success(String verb, String manager, Summary summary, @Nullable Handle handle) {
-        return new Envelope(true, verb, manager, summary, null, null, null, null, null, null, null, null, null, null, handle, false, null);
+        return new Envelope(true, verb, manager, summary, null, null, null, null, null, null, null, null, null, null, handle, false, null, null);
     }
 
     /**
@@ -125,7 +131,7 @@ public record Envelope(boolean ok,
      */
     public static Envelope buildSuccess(String verb, String manager, BuildSummary buildSummary,
                                         @Nullable Handle handle) {
-        return new Envelope(true, verb, manager, null, null, null, buildSummary, null, null, null, null, null, null, null, handle, false, null);
+        return new Envelope(true, verb, manager, null, null, null, buildSummary, null, null, null, null, null, null, null, handle, false, null, null);
     }
 
     /**
@@ -141,7 +147,7 @@ public record Envelope(boolean ok,
                 .map(Envelope::neutralizeDiagnostic)
                 .toList();
         return new Envelope(false, verb, manager, null, null, List.copyOf(neutralized),
-                buildSummary, null, null, null, null, null, null, null, handle, true, null);
+                buildSummary, null, null, null, null, null, null, null, handle, true, null, null);
     }
 
     /**
@@ -161,7 +167,7 @@ public record Envelope(boolean ok,
         List<Finding> neutralized = failures.stream()
                 .map(Envelope::neutralizeFinding)
                 .toList();
-        return new Envelope(false, verb, manager, summary, List.copyOf(neutralized), null, null, null, null, null, null, null, null, null, handle, true, null);
+        return new Envelope(false, verb, manager, summary, List.copyOf(neutralized), null, null, null, null, null, null, null, null, null, handle, true, null, null);
     }
 
     /**
@@ -177,7 +183,7 @@ public record Envelope(boolean ok,
      */
     public static Envelope gitStatus(String verb, GitStatus status, @Nullable Handle handle) {
         return new Envelope(true, verb, null, null, null, null, null,
-                neutralizeGitStatus(status), null, null, null, null, null, null, handle, true, null);
+                neutralizeGitStatus(status), null, null, null, null, null, null, handle, true, null, null);
     }
 
     /**
@@ -197,7 +203,7 @@ public record Envelope(boolean ok,
                 .map(Envelope::neutralizeGitCommit)
                 .toList();
         return new Envelope(true, verb, null, null, null, null, null, null,
-                List.copyOf(neutralized), null, null, null, null, null, null, true, null);
+                List.copyOf(neutralized), null, null, null, null, null, null, true, null, null);
     }
 
     /**
@@ -214,7 +220,7 @@ public record Envelope(boolean ok,
      */
     public static Envelope gitShow(String verb, GitCommitDetail detail, @Nullable Handle handle) {
         return new Envelope(true, verb, null, null, null, null, null, null, null,
-                neutralizeGitCommitDetail(detail), null, null, null, null, handle, true, null);
+                neutralizeGitCommitDetail(detail), null, null, null, null, handle, true, null, null);
     }
 
     /**
@@ -238,7 +244,7 @@ public record Envelope(boolean ok,
                 .map(Envelope::neutralizeGitDiffEntry)
                 .toList();
         return new Envelope(true, verb, null, null, null, null, null, null, null, null,
-                List.copyOf(neutralized), null, null, null, handle, true, null);
+                List.copyOf(neutralized), null, null, null, handle, true, null, null);
     }
 
     /**
@@ -262,7 +268,7 @@ public record Envelope(boolean ok,
                 .map(Envelope::neutralizeGitBranchEntry)
                 .toList();
         return new Envelope(true, verb, null, null, null, null, null, null, null, null, null,
-                List.copyOf(neutralized), null, null, null, true, null);
+                List.copyOf(neutralized), null, null, null, true, null, null);
     }
 
     /**
@@ -279,7 +285,7 @@ public record Envelope(boolean ok,
     public static Envelope installSuccess(String verb, String manager, InstallSummary installSummary,
                                           @Nullable Handle handle) {
         return new Envelope(true, verb, manager, null, null, null, null, null, null, null, null, null,
-                installSummary, null, handle, false, null);
+                installSummary, null, handle, false, null, null);
     }
 
     /**
@@ -297,7 +303,7 @@ public record Envelope(boolean ok,
      */
     public static Envelope operationalError(String verb, ErrorCode code, String message, String hint,
                                             @Nullable Handle handle) {
-        return new Envelope(false, verb, null, null, null, null, null, null, null, null, null, null, null, new OperationalError(code, message, hint), handle, false, null);
+        return new Envelope(false, verb, null, null, null, null, null, null, null, null, null, null, null, new OperationalError(code, message, hint), handle, false, null, null);
     }
 
     /**
@@ -330,7 +336,43 @@ public record Envelope(boolean ok,
                 .map(Envelope::neutralizeFinding)
                 .toList();
         return new Envelope(ok, verb, null, null, List.copyOf(neutralizedFailures), null, null, null,
-                null, null, null, null, null, null, null, true, List.copyOf(neutralizedChecks));
+                null, null, null, null, null, null, null, true, List.copyOf(neutralizedChecks), null);
+    }
+
+    /**
+     * Build a {@code pr_view} result envelope ({@code ok=true} — a fetched PR view is always
+     * "operation succeeded"; the PR's own state/mergeability is data, not an operational failure)
+     * (PRD-6 S2, #100). {@code manager} is null (forge is ecosystem-agnostic).
+     *
+     * <p><b>P9 neutralization.</b> {@code headRef}/{@code baseRef} are repo-derived (a repo can name
+     * a branch with adversarial bytes), so they are passed through {@link OutboundNeutralizer} and
+     * the envelope is marked {@code untrusted=true}. {@code state}/{@code mergeable}/{@code merged}/
+     * {@code headSha}/{@code reviewStatus}/{@code checksSummary} are server-controlled/computed and
+     * are not neutralized.</p>
+     *
+     * @param verb the verb name ({@code "pr_view"})
+     * @param view the fetched PR metadata carrier
+     * @return the pr_view envelope
+     */
+    public static Envelope prView(String verb, PrView view) {
+        return new Envelope(true, verb, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, true, null, neutralizePrView(view));
+    }
+
+    /**
+     * Build a {@code pr_diff} result envelope ({@code ok=true}) carrying ONLY a {@code handle}
+     * (PRD-6 S2, #100). The full unified diff text is stashed by the use-case (mirroring
+     * {@code git_diff}'s full-patch handle) and is retrievable, non-lossily, via
+     * {@code get_log(handle)}. No repo-derived content is inline in the envelope itself, so it is
+     * marked {@code untrusted=false} (mirrors {@link #buildSuccess}, another handle-only success).
+     *
+     * @param verb   the verb name ({@code "pr_diff"})
+     * @param handle the handle pointing at the stashed full diff text
+     * @return the pr_diff envelope
+     */
+    public static Envelope prDiff(String verb, Handle handle) {
+        return new Envelope(true, verb, null, null, null, null, null, null, null, null, null, null,
+                null, null, handle, false, null, null);
     }
 
     // ---- P9 neutralization helpers ----
@@ -343,6 +385,19 @@ public record Envelope(boolean ok,
     private static PrCheck neutralizePrCheck(PrCheck check) {
         String name = OutboundNeutralizer.neutralize(check.name(), OutboundNeutralizer.CONTAINER_CAP);
         return new PrCheck(name, check.conclusion(), check.handle());
+    }
+
+    /**
+     * Apply {@link OutboundNeutralizer} to the repo-derived {@code headRef}/{@code baseRef} of a
+     * {@link PrView} ({@code SOURCE_FILE_CAP}, branch-name shaped). {@code state}, {@code mergeable},
+     * {@code merged}, {@code headSha} (git-generated), {@code reviewStatus}, and
+     * {@link PrChecksSummary} are server-controlled/computed and are not neutralized.
+     */
+    private static PrView neutralizePrView(PrView view) {
+        String headRef = OutboundNeutralizer.neutralize(view.headRef(), OutboundNeutralizer.SOURCE_FILE_CAP);
+        String baseRef = OutboundNeutralizer.neutralize(view.baseRef(), OutboundNeutralizer.SOURCE_FILE_CAP);
+        return new PrView(view.state(), view.mergeable(), view.merged(), headRef, view.headSha(),
+                baseRef, view.reviewStatus(), view.checksSummary());
     }
 
     /**

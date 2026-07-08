@@ -2,10 +2,14 @@ package dev.nobash.adapter.out.forge.github;
 
 import dev.nobash.domain.error.ErrorCode;
 import dev.nobash.domain.forge.ForgeAccessException;
+import dev.nobash.domain.forge.ForgeCheckClassifier;
+import dev.nobash.domain.forge.PrChecksSummary;
+import dev.nobash.domain.forge.PrView;
 import dev.nobash.domain.port.out.ForgeCheckRequest;
 import dev.nobash.domain.port.out.ForgeCheckRun;
 import dev.nobash.domain.port.out.ForgeLogRequest;
 import dev.nobash.domain.port.out.ForgePort;
+import dev.nobash.domain.port.out.ForgePrRequest;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.json.JsonMapper;
 import io.micronaut.json.tree.JsonNode;
@@ -24,7 +28,7 @@ import java.util.Optional;
 import java.util.function.UnaryOperator;
 
 /**
- * The outbound GitHub REST adapter satisfying {@link ForgePort} (PRD-6 S1, #99). Uses the raw JDK
+ * The outbound GitHub REST adapter satisfying {@link ForgePort} (PRD-6 S1/S2, #99/#100). Uses the raw JDK
  * {@code java.net.http.HttpClient} with {@code followRedirects(NEVER)} — a deliberate DESIGN §7
  * deviation (D69) chosen because the declarative {@code @Client} cannot express the manual,
  * no-{@code Authorization}-forward 302 control the security floor requires. No new runtime dependency
@@ -47,6 +51,7 @@ import java.util.function.UnaryOperator;
 public class GithubForgeAdapter implements ForgePort {
 
     private static final String ACCEPT = "application/vnd.github+json";
+    private static final String DIFF_ACCEPT = "application/vnd.github.v3.diff";
     private static final String API_VERSION = "2022-11-28";
     private static final String USER_AGENT = "no-bash-mcp";
 
@@ -76,12 +81,21 @@ public class GithubForgeAdapter implements ForgePort {
     public List<ForgeCheckRun> fetchChecks(ForgeCheckRequest request) {
         String token = resolveToken(request.tokenEnv());
         String apiBase = apiBase(request.baseUrl(), request.apiPrefix());
-        String repoPath = "/repos/" + request.owner() + "/" + request.repo();
+        return fetchChecksInternal(apiBase, token, request.owner(), request.repo(), request.ref());
+    }
 
+    /**
+     * The shared check-runs + Commit-Statuses fold, reused by {@link #fetchChecks(ForgeCheckRequest)}
+     * (pr_checks, S1) and {@link #fetchPrView(ForgePrRequest)} (the pr_view checks summary, S2, #100).
+     * Behavior-preserving extraction — no change to the pr_checks call sequence or semantics.
+     */
+    private List<ForgeCheckRun> fetchChecksInternal(String apiBase, String token, String owner,
+                                                     String repo, String ref) {
+        String repoPath = "/repos/" + owner + "/" + repo;
         List<ForgeCheckRun> runs = new ArrayList<>();
 
         // Check-runs: paginate via Link rel="next" to exhaustion.
-        URI url = URI.create(apiBase + repoPath + "/commits/" + request.ref() + "/check-runs");
+        URI url = URI.create(apiBase + repoPath + "/commits/" + ref + "/check-runs");
         while (url != null) {
             HttpResponse<String> resp = get(url, token);
             requireOk(resp);
@@ -90,7 +104,7 @@ public class GithubForgeAdapter implements ForgePort {
         }
 
         // Commit Statuses: folded into the same list (also Link-paginated defensively).
-        URI statusUrl = URI.create(apiBase + repoPath + "/commits/" + request.ref() + "/status");
+        URI statusUrl = URI.create(apiBase + repoPath + "/commits/" + ref + "/status");
         while (statusUrl != null) {
             HttpResponse<String> resp = get(statusUrl, token);
             requireOk(resp);
@@ -126,12 +140,91 @@ public class GithubForgeAdapter implements ForgePort {
         return resp.body();
     }
 
+    @Override
+    public PrView fetchPrView(ForgePrRequest request) {
+        String token = resolveToken(request.tokenEnv());
+        String apiBase = apiBase(request.baseUrl(), request.apiPrefix());
+        String prPath = "/repos/" + request.owner() + "/" + request.repo() + "/pulls/" + request.pr();
+
+        HttpResponse<String> prResp = get(URI.create(apiBase + prPath), token);
+        requireOk(prResp);
+        JsonNode pr = readTree(prResp.body());
+
+        String state = str(pr, "state");
+        Boolean mergeable = bool(pr, "mergeable");
+        boolean merged = Boolean.TRUE.equals(bool(pr, "merged"));
+        JsonNode head = pr == null ? null : pr.get("head");
+        JsonNode base = pr == null ? null : pr.get("base");
+        String headRef = str(head, "ref");
+        String headSha = str(head, "sha");
+        String baseRef = str(base, "ref");
+
+        HttpResponse<String> reviewsResp = get(URI.create(apiBase + prPath + "/reviews"), token);
+        requireOk(reviewsResp);
+        String reviewStatus = foldReviewStatus(readTree(reviewsResp.body()));
+
+        PrChecksSummary checksSummary = headSha == null
+                ? new PrChecksSummary(0, 0, true)
+                : summarizeChecks(fetchChecksInternal(apiBase, token, request.owner(), request.repo(), headSha));
+
+        return new PrView(state, mergeable, merged, headRef, headSha, baseRef, reviewStatus, checksSummary);
+    }
+
+    @Override
+    public String fetchPrDiff(ForgePrRequest request) {
+        String token = resolveToken(request.tokenEnv());
+        String apiBase = apiBase(request.baseUrl(), request.apiPrefix());
+        URI uri = URI.create(apiBase + "/repos/" + request.owner() + "/" + request.repo()
+                + "/pulls/" + request.pr());
+
+        HttpResponse<String> resp = get(uri, token, DIFF_ACCEPT);
+        requireOk(resp);
+        return resp.body();
+    }
+
+    private static PrChecksSummary summarizeChecks(List<ForgeCheckRun> runs) {
+        long failing = runs.stream().filter(ForgeCheckClassifier::isFailing).count();
+        boolean ok = ForgeCheckClassifier.ok(runs);
+        return new PrChecksSummary(runs.size(), (int) failing, ok);
+    }
+
+    /**
+     * Fold the {@code /pulls/{n}/reviews} array into a single status (PrView javadoc documents the
+     * simplification): any {@code CHANGES_REQUESTED} wins; else any {@code APPROVED}; else
+     * {@code "reviewed"} when the list is non-empty; else {@code "none"}.
+     */
+    private static String foldReviewStatus(@Nullable JsonNode reviews) {
+        if (reviews == null || !reviews.isArray()) {
+            return "none";
+        }
+        boolean any = false;
+        boolean approved = false;
+        for (JsonNode review : reviews.values()) {
+            any = true;
+            String state = str(review, "state");
+            if ("CHANGES_REQUESTED".equalsIgnoreCase(state)) {
+                return "changes_requested";
+            }
+            if ("APPROVED".equalsIgnoreCase(state)) {
+                approved = true;
+            }
+        }
+        if (approved) {
+            return "approved";
+        }
+        return any ? "reviewed" : "none";
+    }
+
     // ---- HTTP ----
 
     private HttpResponse<String> get(URI uri, @Nullable String token) {
+        return get(uri, token, ACCEPT);
+    }
+
+    private HttpResponse<String> get(URI uri, @Nullable String token, String accept) {
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri)
                 .GET()
-                .header("Accept", ACCEPT)
+                .header("Accept", accept)
                 .header("X-GitHub-Api-Version", API_VERSION)
                 .header("User-Agent", USER_AGENT)
                 .timeout(Duration.ofSeconds(30));
@@ -337,6 +430,27 @@ public class GithubForgeAdapter implements ForgePort {
         } catch (RuntimeException e) {
             return null;
         }
+    }
+
+    /**
+     * Read a nullable boolean field via {@link JsonNode#coerceStringValue()} (mirrors {@link #str}).
+     * Returns {@code null} for an absent/JSON-null field or a value that does not coerce to
+     * {@code "true"}/{@code "false"} — e.g. GitHub's {@code mergeable} is {@code null} while GitHub is
+     * still computing it.
+     */
+    @Nullable
+    private static Boolean bool(@Nullable JsonNode obj, String field) {
+        String s = str(obj, field);
+        if (s == null) {
+            return null;
+        }
+        if ("true".equalsIgnoreCase(s)) {
+            return Boolean.TRUE;
+        }
+        if ("false".equalsIgnoreCase(s)) {
+            return Boolean.FALSE;
+        }
+        return null;
     }
 
     /** Parse the trailing job id from a check-run {@code details_url} (.../job/{jobId}). */
