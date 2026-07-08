@@ -140,6 +140,24 @@
       <scope>test</scope>
     </dependency>
 
+    <!-- Forge HTTP stub for the pr_checks adapter tests (PRD-6 S1, #99). Pinned, unmanaged:
+         WireMock serves the GitHub REST shapes (paginated check-runs, Commit Statuses, the
+         302-to-signed-blob job-log flow) over a real local HTTP server so the production JDK
+         HttpClient exercises Link rel=next pagination and the cross-host Authorization strip
+         against a deterministic, offline endpoint. Test scope only.
+
+         The STANDALONE artifact is mandatory (not plain `wiremock`): StdioServerEndToEndTest spawns
+         the real server with the full test `java.class.path`, so WireMock's transitive Jackson/Jetty
+         would collide with micronaut-serde-jackson in that subprocess and corrupt the STDIO channel.
+         `wiremock-standalone` shades every transitive dependency (WireMock's own API classes stay
+         un-relocated), so the classpath stays conflict-free. -->
+    <dependency>
+      <groupId>org.wiremock</groupId>
+      <artifactId>wiremock-standalone</artifactId>
+      <version>3.13.2</version>
+      <scope>test</scope>
+    </dependency>
+
   </dependencies>
 
   <build>
@@ -380,6 +398,10 @@
               <buildArgs>
                 <buildArg>--static-nolibc</buildArg>
                 <buildArg>--no-fallback</buildArg>
+                <!-- PRD-6 S3 (#101): the native TLS-stack proof leg drives java.net.http.HttpClient
+                     against the real GitHub API — HTTPS must be registered explicitly for
+                     native-image (it is not auto-enabled by the reachability metadata repo). -->
+                <buildArg>--enable-url-protocols=https</buildArg>
                 <buildArg>-Dfile.encoding=UTF-8</buildArg>
                 <buildArg>-Dsun.jnu.encoding=UTF-8</buildArg>
               </buildArgs>
@@ -416,6 +438,9 @@
               <imageName>no-bash-mcp</imageName>
               <buildArgs>
                 <buildArg>--no-fallback</buildArg>
+                <!-- PRD-6 S3 (#101): see the native-linux profile comment — HTTPS registration for
+                     the native TLS-stack proof leg. -->
+                <buildArg>--enable-url-protocols=https</buildArg>
                 <buildArg>-Dfile.encoding=UTF-8</buildArg>
                 <buildArg>-Dsun.jnu.encoding=UTF-8</buildArg>
               </buildArgs>
@@ -453,6 +478,9 @@
               <imageName>no-bash-mcp</imageName>
               <buildArgs>
                 <buildArg>--no-fallback</buildArg>
+                <!-- PRD-6 S3 (#101): see the native-linux profile comment — HTTPS registration for
+                     the native TLS-stack proof leg. -->
+                <buildArg>--enable-url-protocols=https</buildArg>
                 <buildArg>-Dfile.encoding=UTF-8</buildArg>
                 <buildArg>-Dsun.jnu.encoding=UTF-8</buildArg>
               </buildArgs>

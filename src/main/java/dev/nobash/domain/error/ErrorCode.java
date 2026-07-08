@@ -160,5 +160,57 @@ public enum ErrorCode {
      * {@link #TOOL_NOT_INSTALLED} (the launcher is ABSENT from PATH): here it is present but
      * non-spawnable.
      */
-    MANAGER_NOT_SPAWNABLE
+    MANAGER_NOT_SPAWNABLE,
+
+    /**
+     * A forge verb ({@code pr_checks}) resolved a repository whose host is NOT in the operator
+     * allowlist ({@code forge.instances[]}, #98). The host comes from the {@code origin} remote
+     * (or the single allowlisted instance for a {@code repo} slug override) and is matched against
+     * the operator-authored allowlist; no match fails closed BEFORE any HTTP is issued (SSRF floor,
+     * forge-security-model.md area 2 — the host is never agent-supplied). The hint points the
+     * operator at adding the instance to the external forge config. Distinct from
+     * {@link #FORGE_ORIGIN_UNRESOLVED} (no host could be determined at all): here a host WAS parsed
+     * but is not permitted (PRD-6 S1, #99; D64).
+     */
+    FORGE_HOST_NOT_ALLOWLISTED,
+
+    /**
+     * A forge REST call was rejected by the forge's rate limiter — HTTP {@code 429}, or {@code 403}
+     * with {@code X-RateLimit-Remaining: 0} / a {@code Retry-After} header. The MCP surfaces the
+     * {@code Retry-After} value in the message and NEVER auto-retries (an auto-retry would amplify a
+     * throttled load and hide the limit from the agent — a false signal). The hint tells the agent
+     * to wait the surfaced interval or provision a token for a higher budget (tokenless public reads
+     * are ~10–15 {@code pr_checks}/h, D62). PRD-6 S1, #99; D65.
+     */
+    FORGE_RATE_LIMITED,
+
+    /**
+     * A forge REST call returned {@code 404 Not Found} (or {@code 401} for invalid credentials) —
+     * typically a PRIVATE repository queried WITHOUT a token, which GitHub deliberately reports as a
+     * 404 to avoid leaking the repository's existence. This fails clear as a structured error, NEVER
+     * as an empty check set (an empty fold would false-green a repo the caller cannot actually see).
+     * The hint points at provisioning a read-scoped token for the instance ({@code tokenEnv}). PRD-6
+     * S1, #99; D66.
+     */
+    FORGE_RESOURCE_NOT_FOUND,
+
+    /**
+     * A forge verb could not determine the target repository: the workspace has no {@code origin}
+     * remote, {@code git remote get-url origin} failed, or the remote URL was neither a recognized
+     * SSH ({@code git@host:owner/repo.git}) nor HTTPS ({@code https://host/owner/repo(.git)}) form,
+     * and no explicit {@code repo} override was supplied. Fails closed before any HTTP. The hint tells
+     * the agent to pass an explicit {@code repo} (owner/repo) or run from a checkout with an
+     * allowlisted {@code origin}. Distinct from {@link #FORGE_HOST_NOT_ALLOWLISTED} (a host WAS
+     * resolved but is not permitted). PRD-6 S1, #99; D67.
+     */
+    FORGE_ORIGIN_UNRESOLVED,
+
+    /**
+     * A forge REST call failed for an unexpected reason not covered by the specific codes above — a
+     * non-2xx status other than 404/401/429/403-rate-limit, an I/O failure reaching the host, or a
+     * malformed response body. Fails closed with the status/cause in the message rather than letting
+     * an unstructured exception escape the Envelope contract; the raw detail is safe (no secret). The
+     * hint points at retrying or checking forge availability. PRD-6 S1, #99; D68.
+     */
+    FORGE_REQUEST_FAILED
 }
