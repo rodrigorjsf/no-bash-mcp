@@ -25,8 +25,8 @@ evidence. See gotcha **G11**.
 
 The catalog groups by category: a **test/build/dep** execution group, the ecosystem-agnostic
 **git read-only** group (five discrete verbs, not `git(mode)` — ADR-0001), the **drill-down**
-keystone `get_log`, and the **post-v1 forge** group. Core verbs are shipped; forge `pr_*` is
-deferred to a later PRD (D46).
+keystone `get_log`, and the **forge** group. Core verbs, git read-only, and forge `pr_*` are all
+shipped (forge as of PRD-6, D62–D69, GitHub.com-only — GHES seams built, claim withheld).
 
 ```mermaid
 flowchart TB
@@ -53,7 +53,7 @@ flowchart TB
         GLG[get_log]
     end
 
-    subgraph Forge["Forge pr_* — post-v1 / roadmap"]
+    subgraph Forge["Forge pr_* — shipped (GitHub.com-only)"]
         PC[pr_checks]
         PV[pr_view]
         PD[pr_diff]
@@ -72,12 +72,14 @@ flowchart TB
     class PC,PV,PD forge
 ```
 
-*Verb catalog by category: blue execution verbs, green git read-only verbs, and red post-v1 forge verbs all funnel large results through the amber `get_log` drill-down keystone (G5).*
+*Verb catalog by category: blue execution verbs, green git read-only verbs, and red forge verbs
+(shipped, GitHub.com-only) all funnel large results through the amber `get_log` drill-down keystone (G5).*
 
 ## Forge inspection (PRD-6 — GitHub-first, decision-log D62)
 
 Remote, read-only inspection of a code-hosting forge over **HTTP** (ADR-0002, ADR-0003). Deferred
-from v1 by **D46**; scoped as **PRD-6** by **D62**. The first forge target is **GitHub** —
+from v1 by **D46**; scoped as **PRD-6** by **D62** and now **shipped** (D62–D69). The first forge
+target is **GitHub** —
 `github.com` shippable; **GHES seams built, claim withheld** (URL construction modeled; operational
 seams unvalidated against any real instance). GitLab (SaaS + self-hosted) follows in a later PRD.
 **REST-only** (spike s3 proved every verb + drill-down without GraphQL; D62). **No** generic `api`
