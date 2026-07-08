@@ -118,3 +118,8 @@ time in future sessions.
 - After editing Mermaid diagrams, run `scripts/mermaid-gate.sh` before committing (needs `libasound2t64`).
 - mermaid-gate false-FAILs in the Bash tool (chromium >120s cold-start); run it in interactive fish.
 - Raw NUL (0x00) in a source file → git binary-renders it; use the `\0` escape (detect via `python3`).
+- orchestrate capability tools return `not-configured` mid-run? `.orchestrate/commands.json` (gitignored) vanished — recreate it.
+- `gh pr edit --body` fails on Projects-classic GraphQL; use `gh api repos/O/R/pulls/N -X PATCH -F body=@file`.
+- orchestrate slice→umbrella `gh pr merge` blocked by auto-mode self-approval; run it via `!` prefix.
+- MCP outputSchema rejects a present `@Nullable field:null`; nested domain records need `@JsonInclude(NON_NULL)` (cf. PrCheck/PrView).
+- Acceptance ITs (failsafe, npx+native) run only in CI, not `mvn test` — a broken verb passes surefire; repro locally via JDK HttpServer stub + raw STDIO.
