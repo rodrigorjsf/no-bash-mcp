@@ -4,8 +4,9 @@
 ---
 
 > **v1 shipped.** The shipped surface is `run_tests` (Maven, Node/jest, Go), `build`, `install`,
-> the five git read verbs, and `get_log`. The npm/npx native launcher is available (PRD-5 #44 S3,
-> v0.0.1-alpha.2 published). Forge verbs are roadmap items, not yet available.
+> the five git read verbs, `get_log`, and — as of **PRD-6** — the three forge inspection verbs
+> (`pr_checks`, `pr_view`, `pr_diff`, GitHub.com-only). The npm/npx native launcher is available
+> (PRD-5 #44 S3, v0.0.1-alpha.2 published).
 
 A Micronaut MCP server that replaces an agent's Bash tool with safe, structured, token-efficient
 operations so the Bash permission can be removed entirely. The agent never composes a command; the
@@ -80,6 +81,64 @@ With `filter`: returns the full detail/stack trace for the matching failing test
 Without `filter`: returns the whole retained raw output (stdout + stderr).
 
 Returns `null` when the handle is unknown or evicted from the run cache.
+
+### Forge inspection (`pr_checks`, `pr_view`, `pr_diff`) — GitHub-first
+
+Remote, read-only inspection of a code-hosting forge over HTTP (PRD-6, decision-log D62–D69).
+**GitHub.com-only shippable** — see *GHES claim withheld* below.
+
+| Verb | Description |
+|---|---|
+| `pr_checks(path?, ref?, repo?)` | CI check status for a PR / branch / commit. Folds check-runs **and** the Commit Statuses API, paginating to exhaustion — a failed check flips `ok=false`. The failing log is drilled into via `get_log(handle)` (retires the `gh run view --log-failed` pattern). |
+| `pr_view(path?, pr?, repo?)` | PR metadata in one call — state, mergeable, review status, head/base, checks summary. |
+| `pr_diff(path?, pr?, repo?)` | The PR's diff, behind a `handle` + `get_log` for large patches. |
+
+#### Operator config — the first operator-provisioned config surface
+
+Forge access is **fail-closed**: no configured instance means no forge access. The operator
+authors a small external YAML listing allowlisted instances and points `MICRONAUT_CONFIG_FILES`
+at it from the harness `env` block (`forge.instances[]`, bound via Micronaut
+`@EachProperty(list=true)`, D63). A minimal example, one `github.com` entry:
+
+```yaml
+forge:
+  instances:
+    - baseUrl: https://api.github.com
+      tokenEnv: GITHUB_TOKEN
+```
+
+`baseUrl` and an optional `apiPrefix` locate the instance; `tokenEnv` (optional) names an
+environment variable holding a read-scoped token — never the secret inline. `http://` base URLs
+are accepted **only** in the test profile; the production binding rejects them (TLS always).
+
+#### Token-optional posture — honest tokenless budget
+
+Token is **optional per allowlisted instance** (D62/D65). A tokenless instance still serves
+**public** repos via unauthenticated GETs, at GitHub's 60 req/h unauthenticated rate limit; a
+`pr_checks` call costs 3–5 GETs, so the honest budget is **~10–15 `pr_checks` inspections/hour
+tokenless**. The tokened path adds private-repo access and keeps the cross-origin
+no-`Authorization`-forward control on 302 redirects (D69). There is **no auto-retry** on rate
+limiting — the `Retry-After` header is surfaced for the agent to decide.
+
+#### Fail-clear error surface
+
+Every forge failure returns a structured operational error, never an unstructured exception:
+
+| `ErrorCode` | When it fires |
+|---|---|
+| `FORGE_HOST_NOT_ALLOWLISTED` | The resolved repo host is not in the operator allowlist; fails closed **before** any HTTP call (D64). |
+| `FORGE_RATE_LIMITED` | 429 / 403-with-`Retry-After` / `X-RateLimit-Remaining:0`; surfaces `Retry-After`, never auto-retries (D65). |
+| `FORGE_RESOURCE_NOT_FOUND` | 404 or 401 — e.g. a private repo queried tokenlessly returns 404; never folded into an empty check set. Hint: provision a read-scoped token (D66). |
+| `FORGE_ORIGIN_UNRESOLVED` | No `origin` remote / unparseable URL and no `repo` override; fails closed before any HTTP. Hint: pass `repo` (owner/repo) or run from an allowlisted checkout (D67). |
+| `FORGE_REQUEST_FAILED` | Any other non-2xx / I/O / malformed-body failure; fails closed rather than leaking an unstructured exception (D68). |
+
+#### GHES claim withheld
+
+The forge seams support a `{baseUrl, apiPrefix}` shape general enough for GitHub Enterprise
+Server, and are stub-tested against it — but **only GitHub.com is claimed shippable**. GHES's
+**pagination behavior, rate-limit headers, secondary limits, untrusted content** are unvalidated
+against any real GHES instance (D62 sub-decision 7) — weaker evidence than, for example, the
+win32 native tuple's real CI runner. GHES support is not claimed to work.
 
 ---
 
@@ -208,6 +267,21 @@ After confirming the MCP verbs work, **manually remove the agent's Bash permissi
 harness configuration. The exact mechanism is harness-specific (e.g. a `permissions.deny` entry
 in Claude Code's `settings.json`). Keeping Bash enabled alongside the MCP defeats the purpose.
 
+**Deny-list narrowing (PRD-6, D62 sub-decision 9).** Forge read-only retires the `gh` **read**
+patterns — each now has a direct MCP replacement:
+
+| Retired `gh` read pattern | Replacement |
+|---|---|
+| `gh run view --log-failed` | `pr_checks` + `get_log` |
+| `gh pr view` | `pr_view` |
+| `gh pr diff` | `pr_diff` |
+| `gh pr checks` | `pr_checks` |
+
+`gh` **write** commands (`gh issue create`, `gh pr create`, `gh pr merge`, …) **stay bridged** —
+PRD-6 is read-only and does **not** advance removing Bash for `gh` on its own behalf; mutating-git
+and mutating-`gh` remain a later, not-yet-shipped candidate (D32/D46/D62 sub-decision 9). Deny only
+the retired read patterns above; leave `gh` write commands allowed until that later work ships.
+
 ---
 
 ## v1 scope and roadmap
@@ -224,10 +298,15 @@ Shipped in v1:
 Also shipped (PRD-5 S3):
 - npm/npx native binary launcher (`no-bash-mcp` + `@no-bash-mcp/<os>-<arch>` platform packages, v0.0.1-alpha.2; [ADR-0010](./docs/adr/0010-npm-launcher-distribution.md))
 
+Also shipped (PRD-6, GitHub-first, decision-log D62–D69):
+- Forge inspection — `pr_checks`, `pr_view`, `pr_diff` (GitHub.com-only; GHES seams built, claim withheld — see above)
+- `forge.instances[]` operator config surface, token-optional posture, fail-clear `FORGE_*` error codes
+
 Not yet available (roadmap, not shipped):
 - `lint`, `run_task` verbs
-- Forge inspection (`pr_checks`, `pr_view`, `pr_diff`)
 - `describe_project`, `dependencies`
+- Mutating-git / mutating-`gh` verbs (deny-list retirement for `gh` write commands)
+- GHES / GitLab forge instances (seams built for GHES; claim withheld — see *Forge inspection* above)
 - Bootstrap auto-write of `.mcp.json` for the npx channel (#78, halted/needs-triage)
 - Published JVM-jar distribution channel (for uncovered platforms; deferred — YAGNI)
 

@@ -106,10 +106,10 @@ flowchart LR
     class X agent
 ```
 
-*Forge inspection is PRD-6 (D46 deferred it from v1; D62 scoped it): the boundary above is the
-target model, not yet shipped surface. The gold side is operator-provisioned and non-agent-mutable;
-read-scope is an operator-provisioning obligation, not a code-enforced write-rejection — and on a
-tokenless instance (D62) the token node is simply absent.*
+*Forge inspection is PRD-6 (D46 deferred it from v1; D62 scoped it; D63–D69 shipped it,
+GitHub.com-only): the boundary above is the shipped model. The gold side is operator-provisioned
+and non-agent-mutable; read-scope is an operator-provisioning obligation, not a code-enforced
+write-rejection — and on a tokenless instance (D62) the token node is simply absent.*
 
 ## Relationship to the command-execution guarantee
 
