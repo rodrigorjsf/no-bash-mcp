@@ -1,5 +1,6 @@
 package dev.nobash.domain.forge;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import io.micronaut.core.annotation.Introspected;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.serde.annotation.Serdeable;
@@ -23,6 +24,7 @@ import io.micronaut.serde.annotation.Serdeable;
  * @param conclusion the effective conclusion/status string
  * @param handle     the {@code get_log} handle id for a failing check-run's job log; null otherwise
  */
+@JsonInclude(JsonInclude.Include.NON_NULL)
 @Serdeable
 @Introspected
 public record PrCheck(String name, String conclusion, @Nullable String handle) {

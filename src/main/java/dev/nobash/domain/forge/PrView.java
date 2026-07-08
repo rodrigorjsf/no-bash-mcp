@@ -1,5 +1,6 @@
 package dev.nobash.domain.forge;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import io.micronaut.core.annotation.Introspected;
 import io.micronaut.core.annotation.Nullable;
 import io.micronaut.serde.annotation.Serdeable;
@@ -30,6 +31,7 @@ import io.micronaut.serde.annotation.Serdeable;
  *                      {@code reviewed}/{@code none})
  * @param checksSummary the folded CI-checks summary (reused from the {@code pr_checks} classifier)
  */
+@JsonInclude(JsonInclude.Include.NON_NULL)
 @Serdeable
 @Introspected
 public record PrView(String state, @Nullable Boolean mergeable, boolean merged,
