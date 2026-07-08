@@ -33,6 +33,16 @@
 ## `fail-fast: false` keeps one tuple's red leg from cancelling the others — every tuple reports its
 ## own verdict so a per-arch regression is pinpointed, not masked.
 ##
+## Two forge legs (PRD-6 S3, #101) run on EVERY tuple (no subprocess-manager needed, so no Windows
+## skip) against the REAL GitHub API over the native TLS/HTTP stack:
+##   - TLS-stack proof   : tokenless pr_checks — 200 (no error) OR 403/429 rate-limit BOTH pass;
+##                          content-immune, cannot flake on rate limits.
+##   - Real-content leg  : authenticated pr_checks against cli/cli#13412 (commit 2503dcfd) via the
+##                          Actions-ambient `GITHUB_TOKEN` (zero new secrets, forwarded to the step's
+##                          `env:` block, never logged) — asserts the real ok=false fold including the
+##                          failing govulncheck check. Reachable only when the token is present; once
+##                          it runs, a rate-limit is a HARD failure, never a silent skip (G5).
+##
 ## This is a SEPARATE workflow from integration-acceptance.yml (the JVM jar gate) because the native
 ## build is slow (~3 min); it still runs on every PR to the integration branches so a regression in
 ## the native form blocks the merge.
@@ -181,6 +191,12 @@ jobs:
       # the IT SKIPS the mvn/npx legs (.cmd spawn limitation, #62) and proves go + serde + stdout.
       - name: "[linux/windows] Build native + run NativeAcceptanceIT (release gate)"
         if: matrix.os == 'linux' || matrix.os == 'windows'
+        env:
+          # Ambient to every Actions run — NOT a new repository secret (PRD-6 S3, #101). Forwarded to
+          # the forked Failsafe JVM by the shell, then inherited by the native binary's ProcessBuilder
+          # (default env-copy semantics) so legs 8/9 can drive an authenticated pr_checks call. Never
+          # echoed: the two forge legs assert its value is absent from every captured process line.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mvn -B -Dpackaging=native-image \
             -Dnbm.native.required=true \
@@ -235,6 +251,9 @@ jobs:
       # outside the `native` profile; `project.build.directory` points the IT at target/.
       - name: "[macos] Acceptance IT on the signed binary (release gate)"
         if: matrix.os == 'macos'
+        env:
+          # Same ambient-token forwarding as the linux/windows step above (PRD-6 S3, #101).
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mvn -B \
             -Dnbm.native.required=true \
