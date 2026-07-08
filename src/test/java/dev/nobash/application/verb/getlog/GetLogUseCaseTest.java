@@ -67,6 +67,16 @@ class GetLogUseCaseTest {
         public String fetchJobLog(ForgeLogRequest request) {
             throw new AssertionError("forge port must not be consulted on the stash path");
         }
+
+        @Override
+        public dev.nobash.domain.forge.PrView fetchPrView(dev.nobash.domain.port.out.ForgePrRequest request) {
+            throw new AssertionError("forge port must not be consulted on the stash path");
+        }
+
+        @Override
+        public String fetchPrDiff(dev.nobash.domain.port.out.ForgePrRequest request) {
+            throw new AssertionError("forge port must not be consulted on the stash path");
+        }
     }
 
     // ── No-filter path: return the full raw output ────────────────────────────
@@ -218,6 +228,16 @@ class GetLogUseCaseTest {
                     assertThat(request.jobId()).isEqualTo(expectedJobId);
                     return log;
                 }
+
+                @Override
+                public dev.nobash.domain.forge.PrView fetchPrView(dev.nobash.domain.port.out.ForgePrRequest request) {
+                    throw new AssertionError("fetchPrView must not be called by get_log");
+                }
+
+                @Override
+                public String fetchPrDiff(dev.nobash.domain.port.out.ForgePrRequest request) {
+                    throw new AssertionError("fetchPrDiff must not be called by get_log");
+                }
             };
         }
 
@@ -249,6 +269,16 @@ class GetLogUseCaseTest {
                 public String fetchJobLog(ForgeLogRequest request) {
                     throw new ForgeAccessException(ErrorCode.FORGE_RATE_LIMITED,
                             "rate limited", "wait", "60");
+                }
+
+                @Override
+                public dev.nobash.domain.forge.PrView fetchPrView(dev.nobash.domain.port.out.ForgePrRequest request) {
+                    throw new AssertionError();
+                }
+
+                @Override
+                public String fetchPrDiff(dev.nobash.domain.port.out.ForgePrRequest request) {
+                    throw new AssertionError();
                 }
             };
             GetLogUseCase useCase = new GetLogUseCase(cache, registry, forge);

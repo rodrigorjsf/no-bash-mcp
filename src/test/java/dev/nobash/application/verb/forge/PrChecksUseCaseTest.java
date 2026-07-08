@@ -90,6 +90,16 @@ class PrChecksUseCaseTest {
             public String fetchJobLog(ForgeLogRequest request) {
                 throw new AssertionError("fetchJobLog is not part of pr_checks");
             }
+
+            @Override
+            public dev.nobash.domain.forge.PrView fetchPrView(dev.nobash.domain.port.out.ForgePrRequest request) {
+                throw new AssertionError("fetchPrView is not part of pr_checks");
+            }
+
+            @Override
+            public String fetchPrDiff(dev.nobash.domain.port.out.ForgePrRequest request) {
+                throw new AssertionError("fetchPrDiff is not part of pr_checks");
+            }
         };
     }
 
@@ -102,6 +112,16 @@ class PrChecksUseCaseTest {
 
             @Override
             public String fetchJobLog(ForgeLogRequest request) {
+                throw new AssertionError();
+            }
+
+            @Override
+            public dev.nobash.domain.forge.PrView fetchPrView(dev.nobash.domain.port.out.ForgePrRequest request) {
+                throw new AssertionError();
+            }
+
+            @Override
+            public String fetchPrDiff(dev.nobash.domain.port.out.ForgePrRequest request) {
                 throw new AssertionError();
             }
         };
@@ -237,6 +257,16 @@ class PrChecksUseCaseTest {
 
             @Override
             public String fetchJobLog(ForgeLogRequest request) {
+                throw new AssertionError();
+            }
+
+            @Override
+            public dev.nobash.domain.forge.PrView fetchPrView(dev.nobash.domain.port.out.ForgePrRequest request) {
+                throw new AssertionError();
+            }
+
+            @Override
+            public String fetchPrDiff(dev.nobash.domain.port.out.ForgePrRequest request) {
                 throw new AssertionError();
             }
         };
