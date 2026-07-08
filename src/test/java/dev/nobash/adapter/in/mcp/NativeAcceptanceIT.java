@@ -55,6 +55,30 @@ import static org.junit.jupiter.api.Assertions.fail;
  * diagnostic. The local {@code mvn clean test} gate is structurally blind to these (Failsafe, not
  * Surefire, and no native binary present) — the CI native gate is their only real proof (#57).</p>
  *
+ * <p>Two final legs (PRD-6 S3, #101) close the stub-only false-green corridor for the native TLS/HTTP
+ * stack and the real forge content fold, both driving the {@code pr_checks} tool against the REAL
+ * GitHub API — network + CI-ambient {@code GITHUB_TOKEN} required, so (like legs 6/7) they need no
+ * subprocess-manager and run on EVERY tuple:</p>
+ * <ol start="8">
+ *   <li><b>TLS-stack proof</b> — a tokenless, content-immune {@code pr_checks} call to the real GitHub
+ *       API. Only the absence of an operational error (HTTP 200) OR a {@code FORGE_RATE_LIMITED} error
+ *       (HTTP 403/429) counts as reaching GitHub over TLS; any other outcome (host unreachable, a TLS
+ *       failure, an unexpected error code) HARD-FAILS. This asserts nothing about payload content and
+ *       can never flake on GitHub's anonymous rate limit.</li>
+ *   <li><b>Real-content assertion</b> — an authenticated {@code pr_checks} call (via the CI-ambient
+ *       {@code GITHUB_TOKEN}, zero new secrets) against the stable merged public PR the S3 spike used,
+ *       {@code cli/cli} PR #13412 (commit {@code 2503dcfd}), which carries a real failing
+ *       {@code govulncheck} check. Parses the REAL payload and asserts the container-aware
+ *       {@code ok=false} fold INCLUDING the failing {@code govulncheck} check surfacing as a
+ *       {@code ContainerFinding}. Reachable only when {@code GITHUB_TOKEN} is set (self-skips locally
+ *       under the JVM build, HARD-FAILS under the native release gate); once it runs, a rate-limited
+ *       response is a HARD FAILURE, never a silent {@code assumeFalse} skip — the asymmetry with leg 8
+ *       is deliberate: this leg cannot assert content it never received (false-green discipline, G5).
+ *       The token value is never logged: it is forwarded only as an env-var reference to the native
+ *       binary's {@code ProcessBuilder} environment and is asserted absent from every captured
+ *       stdout/stderr line.</li>
+ * </ol>
+ *
  * <h3>Fail-closed (the anti-false-green spine, G5/D28)</h3>
  * <p>Unlike the JVM Inspector ITs (which {@code assumeTrue}-self-skip on any absent prerequisite),
  * this IT is the native <b>release gate</b>: under the {@code native} Maven profile it runs with
@@ -271,6 +295,90 @@ class NativeAcceptanceIT {
                 .contains("forge-config: bound 0 instance");
     }
 
+    // ---- Leg 8: TLS-stack proof — content-immune, 200 OR 403-rate-limit BOTH pass (PRD-6 S3, #101) ----
+    // Tokenless on purpose: a tokenless call to the real GitHub API is MORE likely to hit the anonymous
+    // rate limit, which is exactly the tolerated branch here. No subprocess-manager is needed (only the
+    // binary + network), so this runs on EVERY tuple including Windows.
+
+    @Test
+    void native_binary_tls_stack_reaches_the_real_github_api_over_https() throws Exception {
+        Path configYml = writeForgeConfig("""
+                forge:
+                  instances:
+                    - base-url: https://api.github.com
+                """);
+
+        ForgeRun run = callForgeTool(configYml, "pr_checks",
+                "\"repo\":\"cli/cli\",\"ref\":\"2503dcfd\"", 60);
+
+        String errorCode = jq(run.envelope(), ".error.code // \"\"").strip();
+        boolean reachedTls = errorCode.isBlank() || "FORGE_RATE_LIMITED".equals(errorCode);
+        assertThat(reachedTls)
+                .as("the native TLS/HTTP stack must reach the real GitHub API: either a clean 200 "
+                        + "(no operational error) or a tolerated 403/429 rate-limit "
+                        + "(FORGE_RATE_LIMITED) — any other outcome means the native binary could not "
+                        + "complete a real HTTPS round-trip.\ngot error.code='%s'\nenvelope: %s",
+                        errorCode, run.envelope())
+                .isTrue();
+    }
+
+    // ---- Leg 9: real-content assertion — cli/cli#13412 govulncheck failure fold (PRD-6 S3, #101) ----
+    // Authenticated via the CI-ambient GITHUB_TOKEN (zero new secrets, forwarded by default
+    // ProcessBuilder environment inheritance — no extra plumbing needed). Reachable ONLY when the token
+    // is present (self-skips locally, HARD-FAILS under the native release gate per `gate()`); once it
+    // runs, a rate-limited response is a HARD failure — never wrapped in assumeFalse/assumeTrue, which
+    // would silently skip and false-green this claim (G5).
+
+    @Test
+    void native_binary_pr_checks_against_cli_cli_pr13412_asserts_the_real_govulncheck_failure()
+            throws Exception {
+        String token = System.getenv("GITHUB_TOKEN");
+        gate(token != null && !token.isBlank(),
+                "GITHUB_TOKEN is not set — the real-content leg needs the CI-ambient token "
+                        + "(this leg is CI-only, never runnable locally without exporting one)");
+
+        Path configYml = writeForgeConfig("""
+                forge:
+                  instances:
+                    - base-url: https://api.github.com
+                      token-env: GITHUB_TOKEN
+                """);
+
+        ForgeRun run = callForgeTool(configYml, "pr_checks",
+                "\"repo\":\"cli/cli\",\"ref\":\"2503dcfd\"", 60);
+
+        // Token discipline: assert the raw secret value never leaked into any captured process output,
+        // BEFORE any content assertion (so a leak fails loud regardless of what else holds).
+        String allOutput = String.join("\n", run.stdoutLines()) + "\n" + String.join("\n", run.stderrLines());
+        assertThat(allOutput)
+                .as("the GITHUB_TOKEN value must never appear in the native binary's stdout/stderr")
+                .doesNotContain(token);
+
+        String errorCode = jq(run.envelope(), ".error.code // \"\"").strip();
+        assertThat(errorCode)
+                .as("a rate-limited real-content leg must FAIL LOUD — it cannot assert content it did "
+                        + "not receive; a silent assumeFalse-style skip is never acceptable here (G5).\n"
+                        + "envelope: %s", run.envelope())
+                .isNotEqualTo("FORGE_RATE_LIMITED");
+        assertThat(errorCode)
+                .as("no operational error is expected against a known-stable public merged PR.\nenvelope: %s",
+                        run.envelope())
+                .isBlank();
+
+        assertThat(jq(run.envelope(), ".ok").strip())
+                .as("cli/cli#13412 (commit 2503dcfd) carries a real failing govulncheck check, so the "
+                        + "container-aware fold must report ok=false.\nenvelope: %s", run.envelope())
+                .isEqualTo("false");
+        assertJqTrue(run.envelope(),
+                ".prChecks | any((.name | ascii_downcase | contains(\"govulncheck\")) and .conclusion == \"failure\")",
+                "the govulncheck check must be present in prChecks[] with a failing conclusion.\nenvelope: "
+                        + run.envelope());
+        assertJqTrue(run.envelope(),
+                ".failures | any(.kind == \"container\" and (.container | ascii_downcase | contains(\"govulncheck\")))",
+                "the failing govulncheck check must fold into a top-level ContainerFinding.\nenvelope: "
+                        + run.envelope());
+    }
+
     // ========================================================================================
     // Driving the native binary over STDIO (a Java port of #58's p0_run_tests_smoke.py).
     // ========================================================================================
@@ -372,6 +480,69 @@ class NativeAcceptanceIT {
         outPump.join(2000);
         errPump.join(2000);
         return new ArrayList<>(stderrLines);
+    }
+
+    /** The captured result of one forge-tool round-trip against the native binary (legs 8/9, #101). */
+    private record ForgeRun(String envelope, List<String> stdoutLines, List<String> stderrLines) {
+    }
+
+    /**
+     * Spawn the native binary with {@code MICRONAUT_CONFIG_FILES} pointed at {@code configYml}, perform
+     * the MCP handshake, invoke {@code toolName} with {@code toolArgsJson} (the raw JSON object body,
+     * e.g. {@code "\"repo\":\"cli/cli\",\"ref\":\"2503dcfd\""}), and return the extracted Envelope JSON
+     * plus every captured stdout/stderr line.
+     *
+     * <p>No extra environment plumbing is done for secrets: {@link ProcessBuilder} pre-populates its
+     * environment map with a COPY of the current process's environment (default inheritance), so a
+     * {@code GITHUB_TOKEN} exported into the Maven Failsafe fork (the CI step's {@code env:} block)
+     * automatically reaches the spawned native binary — only {@code MICRONAUT_CONFIG_FILES} is added on
+     * top, exactly like {@link #driveInitializeWithConfig(Path)}.</p>
+     */
+    private static ForgeRun callForgeTool(Path configYml, String toolName, String toolArgsJson,
+                                           int timeoutSeconds) throws Exception {
+        List<String> stdoutLines = Collections.synchronizedList(new ArrayList<>());
+        List<String> stderrLines = Collections.synchronizedList(new ArrayList<>());
+
+        ProcessBuilder pb = new ProcessBuilder(native_binary.toString());
+        pb.environment().put("MICRONAUT_CONFIG_FILES", configYml.toString());
+        Process proc = pb.start();
+        Thread outPump = drain(proc.getInputStream(), stdoutLines);
+        Thread errPump = drain(proc.getErrorStream(), stderrLines);
+
+        try (BufferedWriter stdin = new BufferedWriter(
+                new OutputStreamWriter(proc.getOutputStream(), StandardCharsets.UTF_8))) {
+            send(stdin, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{"
+                    + "\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},"
+                    + "\"clientInfo\":{\"name\":\"native-forge-content-it\",\"version\":\"0\"}}}");
+            boolean init = awaitResponseId(stdoutLines, 1, 20);
+            if (!init) {
+                proc.destroyForcibly();
+                throw new AssertionError("native binary produced no initialize (id=1) response within 20s\n"
+                        + "--- stderr ---\n" + String.join("\n", stderrLines));
+            }
+            send(stdin, "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}");
+            send(stdin, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{"
+                    + "\"name\":\"" + toolName + "\",\"arguments\":{" + toolArgsJson + "}}}");
+            boolean got = awaitResponseId(stdoutLines, 2, timeoutSeconds + 30);
+            if (!got) {
+                proc.destroyForcibly();
+                throw new AssertionError("native " + toolName + " (id=2) produced no response within "
+                        + (timeoutSeconds + 30) + "s\n--- stderr ---\n" + String.join("\n", stderrLines)
+                        + "\n--- stdout ---\n" + String.join("\n", stdoutLines));
+            }
+        }
+
+        if (!proc.waitFor(15, TimeUnit.SECONDS)) {
+            proc.destroy();
+            if (!proc.waitFor(5, TimeUnit.SECONDS)) proc.destroyForcibly();
+        }
+        outPump.join(2000);
+        errPump.join(2000);
+
+        List<String> stdoutSnapshot = new ArrayList<>(stdoutLines);
+        List<String> stderrSnapshot = new ArrayList<>(stderrLines);
+        String envelope = extractEnvelope(stdoutSnapshot, stderrSnapshot);
+        return new ForgeRun(envelope, stdoutSnapshot, stderrSnapshot);
     }
 
     /** Write an external Micronaut config yml (the {@code MICRONAUT_CONFIG_FILES} target) to a temp file. */
